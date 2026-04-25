@@ -1,4 +1,3 @@
-// src/alias.rs
 use crate::person::{Person, person_create_exn};
 use serde_json;
 use std::collections::HashMap;
@@ -6,7 +5,7 @@ use std::fs::File;
 use std::io::BufReader;
 
 /// Author alias handling for book metadata normalization.
-pub fn person_from_string_exn(s: &str) -> Person {
+fn person_from_string_exn(s: &str) -> Person {
     let parts: Vec<&str> = s.trim().split_whitespace().collect();
 
     match parts.as_slice() {
