@@ -4,5 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-md5 = "0.7"
-hex = { version = "0.4", features = ["std"] }
+zip = "8.5.1"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
+hex = "0.4.3"
+md5 = "0.8.0"
+tracing-appender = "0.2.5"
+tracing-config = "0.2.2"
+clap = { version = "4.6.1", features = ["derive"] }
+anyhow = "1.0.102"
+serde = { version = "1.0.228", features = ["derive"] }
+quick-xml = "0.39.2"
+serde_json = "1.0.149"
