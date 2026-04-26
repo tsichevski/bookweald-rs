@@ -14,5 +14,5 @@ tracing-config = "0.2.2"
 clap = { version = "4.6.1", features = ["derive"] }
 anyhow = "1.0.102"
 serde = { version = "1.0.228", features = ["derive"] }
-quick-xml = "0.39.2"
+quick-xml = { version = "0.39.2", features = ["encoding"] }
 serde_json = "1.0.149"

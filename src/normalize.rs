@@ -19,7 +19,7 @@
 /// assert_eq!(normalize_name("Щепкина-Куперник"), Some("Щепкина-Куперник".to_string()));
 /// assert_eq!(normalize_name(" !4-###"), None);
 /// ```
-pub fn normalize_name(s: &str) -> Option<String> {
+pub fn normalize_name(s: &String) -> Option<String> {
     let joined: String = s
         .split('-')
         .filter_map(normalize_chunk)
@@ -66,12 +66,15 @@ mod tests {
 
     #[test]
     fn test_normalize_name_basic() {
-        assert_eq!(normalize_name("1щёпкина "), Some("Щепкина".to_string()));
         assert_eq!(
-            normalize_name("Щепкина-Куперник"),
+            normalize_name("1щёпкина ".to_owned()),
+            Some("Щепкина".to_string())
+        );
+        assert_eq!(
+            normalize_name("Щепкина-Куперник".to_owned()),
             Some("Щепкина-Куперник".to_string())
         );
-        assert_eq!(normalize_name(" !4-###"), None);
+        assert_eq!(normalize_name(" !4-###".to_owned()), None);
     }
 
     #[test]

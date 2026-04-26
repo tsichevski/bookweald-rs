@@ -9,9 +9,15 @@ fn person_from_string_exn(s: &str) -> Person {
     let parts: Vec<&str> = s.trim().split_whitespace().collect();
 
     match parts.as_slice() {
-        [last, first, middle] => person_create_exn(Some(last), Some(first), Some(middle)),
-        [last, first] => person_create_exn(Some(last), Some(first), None),
-        [last] => person_create_exn(Some(last), None, None),
+        [last, first, middle] => person_create_exn(
+            &Some(last.to_string()),
+            &Some(first.to_string()),
+            &Some(middle.to_string()),
+        ),
+        [last, first] => {
+            person_create_exn(&Some(last.to_string()), &Some(first.to_string()), &None)
+        }
+        [last] => person_create_exn(&Some(last.to_string()), &None, &None),
         _ => panic!(
             "Cannot parse string to person: [{}]\n\
              Expected 1–3 parts: \"Last\", \"Last First\", or \"Last First Middle\"",
