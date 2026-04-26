@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ------------------------------------------------------------------
 // DatabaseConfig
@@ -136,42 +136,32 @@ impl Default for BookwealdConfig {
 // --------------------- Public API ---------------------
 
 impl BookwealdConfig {
-    /// Load config.json — strict: required fields must be present
+    /// Load config (strict after init)
     pub fn load() -> anyhow::Result<Self> {
-        // 1. Local override
-        if std::path::Path::new("config.json").exists() {
+        if Path::new("config.json").exists() {
             return Self::load_from("config.json");
         }
 
-        // 2. XDG user config
-        if let Some(mut path) = dirs::config_dir() {
-            path.push("bookweald/config.json");
-            if path.exists() {
-                return Self::load_from(&path);
+        if let Some(mut p) = dirs::config_dir() {
+            p.push("bookweald/config.json");
+            if p.exists() {
+                return Self::load_from(&p);
             }
         }
 
-        anyhow::bail!(
-            "No config.json found.\nRun `bookweald init` (or `bookweald init --force`) to create one."
-        );
+        anyhow::bail!("No config.json found.\nRun `bookweald init` (or `bookweald init --force`)");
     }
 
-    fn load_from<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
+    fn load_from<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(&path)?;
-        let mut cfg: BookwealdConfig = serde_json::from_str(&content).map_err(|e| {
-            anyhow::anyhow!(
-                "Invalid or incomplete configuration in {}: {}\n\
-                     Required fields (library_dir, target_dir, ...) must be present.",
-                path.as_ref().display(),
-                e
-            )
-        })?;
+        let mut cfg: BookwealdConfig = serde_json::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("Invalid config in {}: {}", path.as_ref().display(), e))?;
 
         cfg.resolve_paths();
         Ok(cfg)
     }
 
-    /// Create default config.json (used by `init` command)
+    /// Create default config.json
     pub fn create_default(overwrite: bool) -> anyhow::Result<bool> {
         let path = dirs::config_dir()
             .map(|mut p| {
@@ -185,6 +175,10 @@ impl BookwealdConfig {
         }
 
         if path.exists() && !overwrite {
+            println!(
+                "Config already exists and --force was not used: {}",
+                path.display()
+            );
             return Ok(false);
         }
 
@@ -192,7 +186,7 @@ impl BookwealdConfig {
         let pretty = serde_json::to_string_pretty(&cfg)?;
         std::fs::write(&path, pretty + "\n")?;
 
-        println!("✅ Created default config at: {}", path.display());
+        println!("✅ Created default configuration: {}", path.display());
         Ok(true)
     }
 

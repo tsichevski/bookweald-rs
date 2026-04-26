@@ -16,6 +16,13 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Initialize default configuration file (like OCaml `init`)
+    Init {
+        /// Overwrite existing config
+        #[arg(long, short)]
+        force: bool,
+    },
+
     /// Extract FB2 books from ZIP archive
     Extract {
         #[arg(short, long, value_name = "PATH")]
@@ -69,6 +76,12 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt().with_max_level(level).init();
 
     match &cli.command {
+        Commands::Init { force } => {
+            tracing::info!("Creating default configuration (force: {})", force);
+            bookweald_rs::config::BookwealdConfig::create_default(*force)?;
+            return Ok(());
+        }
+
         Commands::Extract {
             input,
             output,
@@ -78,25 +91,23 @@ fn main() -> Result<()> {
             if *group {
                 tracing::info!("Author grouping enabled");
             }
-
             // TODO: connect your real implementation
-            // bookweald_rs::extract_zip(input, output, *group)
-            //     .context("Failed to extract archive")?;
+            // bookweald_rs::extract_zip(input, output, *group)...
         }
 
         Commands::Validate { input, strict } => {
             tracing::info!("Validating {:?} (strict: {})", input, strict);
-            // bookweald_rs::validate_fb2(input, *strict)?;
+            // bookweald_rs::validate_fb2...
         }
 
         Commands::Group { input, output } => {
             tracing::info!("Grouping books from {:?} into {:?}", input, output);
-            // bookweald_rs::group_by_author(input, output)?;
+            // bookweald_rs::group_by_author...
         }
 
         Commands::Index { path, output } => {
             tracing::info!("Building index {:?} → {:?}", path, output);
-            // bookweald_rs::build_index(path, output)?;
+            // bookweald_rs::build_index...
         }
     }
 
