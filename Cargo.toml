@@ -3,6 +3,10 @@ name = "bookweald-rs"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "bookweald"
+path = "src/tool.rs"
+
 [dependencies]
 zip = "8.5.1"
 tracing = "0.1.44"
@@ -16,3 +20,5 @@ anyhow = "1.0.102"
 serde = { version = "1.0.228", features = ["derive"] }
 quick-xml = { version = "0.39.2", features = ["encoding"] }
 serde_json = "1.0.149"
+dirs = "6.0.0"
+tempfile = "3.27.0"

@@ -15,9 +15,9 @@
 /// ```
 /// use bookweald_rs::normalize::normalize_name;
 ///
-/// assert_eq!(normalize_name("1щёпкина "), Some("Щепкина".to_string()));
-/// assert_eq!(normalize_name("Щепкина-Куперник"), Some("Щепкина-Куперник".to_string()));
-/// assert_eq!(normalize_name(" !4-###"), None);
+/// assert_eq!(normalize_name(&"1щёпкина ".to_owned()), Some("Щепкина".to_string()));
+/// assert_eq!(normalize_name(&"Щепкина-Куперник".to_owned()), Some("Щепкина-Куперник".to_string()));
+/// assert_eq!(normalize_name(&" !4-###".to_owned()), None);
 /// ```
 pub fn normalize_name(s: &String) -> Option<String> {
     let joined: String = s
@@ -67,60 +67,66 @@ mod tests {
     #[test]
     fn test_normalize_name_basic() {
         assert_eq!(
-            normalize_name("1щёпкина ".to_owned()),
+            normalize_name(&"1щёпкина ".to_owned()),
             Some("Щепкина".to_string())
         );
         assert_eq!(
-            normalize_name("Щепкина-Куперник".to_owned()),
+            normalize_name(&"Щепкина-Куперник".to_owned()),
             Some("Щепкина-Куперник".to_string())
         );
-        assert_eq!(normalize_name(" !4-###".to_owned()), None);
+        assert_eq!(normalize_name(&" !4-###".to_owned()), None);
     }
 
     #[test]
     fn test_normalize_name_hyphenated() {
         assert_eq!(
-            normalize_name("иван-иванович"),
+            normalize_name(&"иван-иванович".to_owned()),
             Some("Иван-Иванович".to_string())
         );
         assert_eq!(
-            normalize_name("Л. Н. Толстой"),
+            normalize_name(&"Л. Н. Толстой".to_owned()),
             Some("Лнтолстой".to_string())
         );
         assert_eq!(
-            normalize_name("Алексей-Николаевич-Толстой"),
+            normalize_name(&"Алексей-Николаевич-Толстой".to_owned()),
             Some("Алексей-Николаевич-Толстой".to_string())
         );
     }
 
     #[test]
     fn test_normalize_name_empty_or_only_junk() {
-        assert_eq!(normalize_name(""), None);
-        assert_eq!(normalize_name("   "), None);
-        assert_eq!(normalize_name("---"), None);
-        assert_eq!(normalize_name("123!@#"), None);
-        assert_eq!(normalize_name("- - -"), None);
-        assert_eq!(normalize_name("!@#-123-###"), None);
+        assert_eq!(normalize_name(&"".to_owned()), None);
+        assert_eq!(normalize_name(&"   ".to_owned()), None);
+        assert_eq!(normalize_name(&"---".to_owned()), None);
+        assert_eq!(normalize_name(&"123!@#".to_owned()), None);
+        assert_eq!(normalize_name(&"- - -".to_owned()), None);
+        assert_eq!(normalize_name(&"!@#-123-###".to_owned()), None);
     }
 
     #[test]
     fn test_normalize_name_mixed_chunks() {
         assert_eq!(
-            normalize_name("Ёлка-ёжик-123-!!!"),
+            normalize_name(&"Ёлка-ёжик-123-!!!".to_owned()),
             Some("Елка-Ежик".to_string())
         );
         assert_eq!(
-            normalize_name("  Hello-   World!  "),
+            normalize_name(&"  Hello-   World!  ".to_owned()),
             Some("Hello-World".to_string())
         );
-        assert_eq!(normalize_name("αβγ-123-δεζ"), Some("Αβγ-Δεζ".to_string()));
+        assert_eq!(
+            normalize_name(&"αβγ-123-δεζ".to_owned()),
+            Some("Αβγ-Δεζ".to_string())
+        );
     }
 
     #[test]
     fn test_normalize_name_single_letter() {
-        assert_eq!(normalize_name("а"), Some("А".to_string()));
-        assert_eq!(normalize_name("ё"), Some("Е".to_string()));
-        assert_eq!(normalize_name("A-B-C"), Some("A-B-C".to_string()));
+        assert_eq!(normalize_name(&"а".to_owned()), Some("А".to_string()));
+        assert_eq!(normalize_name(&"ё".to_owned()), Some("Е".to_string()));
+        assert_eq!(
+            normalize_name(&"A-B-C".to_owned()),
+            Some("A-B-C".to_string())
+        );
     }
 
     // ====================== normalize_chunk ======================

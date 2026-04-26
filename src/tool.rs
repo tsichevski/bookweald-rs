@@ -16,7 +16,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Extract FB2 books from ZIP archive(s)
+    /// Extract FB2 books from ZIP archive
     Extract {
         #[arg(short, long, value_name = "PATH")]
         input: PathBuf,
