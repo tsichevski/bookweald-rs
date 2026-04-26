@@ -1,4 +1,5 @@
-use crate::book::{Book, book_create_exn};
+use crate::book::Book;
+use crate::normalize::normalize_chunk;
 use crate::person::{Person, normalize, person_create_exn};
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -13,7 +14,7 @@ fn apply_aliases(p: Person, aliases: Option<&HashMap<String, Person>>) -> Person
     aliases.and_then(|a| a.get(key)).cloned().unwrap_or(p)
 }
 
-pub fn parse_fb2_meta(
+pub fn parse_book_info(
     path: &Path,
     aliases: Option<&HashMap<String, Person>>,
 ) -> Result<Book, Box<dyn std::error::Error>> {
@@ -49,7 +50,7 @@ pub fn parse_fb2_meta(
     let mut current_first_name: Option<String> = None;
     let mut current_middle_name: Option<String> = None;
     let mut current_last_name: Option<String> = None;
-    let mut id: Option<String> = None;
+    let mut ext_id: Option<String> = None;
     let mut title: Option<String> = None;
     let mut lang: Option<String> = None;
     let mut genre: Option<String> = None;
@@ -154,7 +155,7 @@ pub fn parse_fb2_meta(
                     }
 
                     // document-info
-                    [.., b"description", b"document-info", b"id"] => id = Some(text),
+                    [.., b"description", b"document-info", b"id"] => ext_id = Some(text),
                     [.., b"description", b"document-info", b"version"] => version = Some(text),
 
                     _ => {}
@@ -173,21 +174,28 @@ pub fn parse_fb2_meta(
         Some(title) => title,
     };
 
-    append_current_author_unique(
-        &mut current_last_name,
-        &mut current_first_name,
-        &mut current_middle_name,
-        &mut authors,
-    );
+    // Check title is not empty after normalization
+    match normalize_chunk(&title) {
+        None => Err(format!("Book title normalizes to empty: '{}'", &title).into()),
+        _ => {
+            append_current_author_unique(
+                &mut current_last_name,
+                &mut current_first_name,
+                &mut current_middle_name,
+                &mut authors,
+            );
 
-    Ok(book_create_exn(
-        title,
-        authors,
-        id,
-        version,
-        lang,
-        genre,
-        filename,
-        encoding.unwrap_or("UTF-8".to_string()),
-    ))
+            let encoding = encoding.unwrap_or("UTF-8".to_string());
+            Ok(Book {
+                title,
+                authors,
+                ext_id,
+                version,
+                lang,
+                genre,
+                filename,
+                encoding,
+            })
+        }
+    }
 }

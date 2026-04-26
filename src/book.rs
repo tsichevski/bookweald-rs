@@ -3,6 +3,7 @@ use crate::person::Person;
 use md5;
 
 /// Book record and creation utilities.
+#[derive(Debug)] // For tests
 pub struct Book {
     /// External ID (e.g. from <id> element). Defined for most books.
     pub ext_id: Option<String>,
@@ -28,36 +29,6 @@ pub struct Book {
 
     /// Original character encoding of the file (e.g. "utf8", "windows-1251").
     pub encoding: String,
-}
-
-/// [book_create_exn title authors ext_id version lang genre filename encoding]
-/// Creates a new [book] record.
-/// - Computes id from normalized title + author ids.
-/// - Panics with descriptive message if title is empty after normalization
-///   or if no valid data is provided (equivalent to OCaml Failure).
-pub fn book_create_exn(
-    title: String,
-    authors: Vec<Person>,
-    ext_id: Option<String>,
-    version: Option<String>,
-    lang: Option<String>,
-    genre: Option<String>,
-    filename: String,
-    encoding: String,
-) -> Book {
-    // Check title is not empty after normalization
-    normalize_chunk(&title).expect(&format!("title normalizes to empty: '{}'", title));
-
-    Book {
-        ext_id,
-        version,
-        title,
-        authors,
-        lang,
-        genre,
-        filename,
-        encoding,
-    }
 }
 
 /// Computes a MD5 digest for a book.

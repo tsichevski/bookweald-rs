@@ -1,0 +1,11 @@
+<FictionBook>
+  <description>
+    <title-info>
+      <book-title>Название книжки</book-title>
+      <author>
+        <first-name>Leo</first-name>
+        <last-name>Tolstoy</last-name>
+      </author>
+    </title-info>
+  </description>
+</FictionBook>

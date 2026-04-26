@@ -1,7 +1,7 @@
 use crate::normalize;
 
 /// Representation of a person (author, translator, etc.) in the book library.
-#[derive(Clone)]
+#[derive(Clone, Debug)] // 'Debug' for tests
 pub struct Person {
     pub id: String,
     pub first_name: Option<String>,

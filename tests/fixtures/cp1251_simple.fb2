@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<FictionBook>
+  <description>
+    <title-info>
+      <book-title>Название книжки</book-title>
+      <author>
+        <first-name>Лев</first-name>
+        <last-name>Толстой</last-name>
+      </author>
+    </title-info>
+  </description>
+</FictionBook>
