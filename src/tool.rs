@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -91,8 +91,8 @@ fn main() -> Result<()> {
             if *group {
                 tracing::info!("Author grouping enabled");
             }
-            // TODO: connect your real implementation
-            // bookweald_rs::extract_zip(input, output, *group)...
+            bookweald_rs::extract::extract_zip(input, output, *group)
+                .context("Failed to extract archive")?;
         }
 
         Commands::Validate { input, strict } => {

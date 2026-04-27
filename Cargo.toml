@@ -22,3 +22,4 @@ quick-xml = { version = "0.39.2", features = ["encoding"] }
 serde_json = "1.0.149"
 dirs = "6.0.0"
 tempfile = "3.27.0"
+
