@@ -5,3 +5,4 @@ pub mod extract;
 pub mod fb2_parse;
 pub mod normalize;
 pub mod person;
+pub mod validate;

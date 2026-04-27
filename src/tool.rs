@@ -1,6 +1,10 @@
+// src/main.rs
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+
+mod config;
+mod validate; // ← direct in src/
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -26,51 +30,38 @@ struct Cli {
 enum Commands {
     /// Initialize default configuration file
     Init {
-        /// Overwrite existing config
         #[arg(long, short)]
         force: bool,
     },
 
-    /// Extract FB2 books from one or more ZIP files (flat, parallel)
+    /// Extract FB2 books from ZIP files
     Extract {
-        /// ZIP file(s) to extract (required positional arguments)
         #[arg(value_name = "ZIP", required = true)]
         input: Vec<PathBuf>,
-
-        /// Output directory (defaults to value from config)
-        #[arg(short, long, value_name = "DIR")]
+        #[arg(short, long)]
         output: Option<PathBuf>,
     },
 
-    /// Validate FB2 files
+    /// Validate FB2/XML files against XSD (streaming)
     Validate {
-        #[arg(short, long, value_name = "PATH")]
-        input: PathBuf,
+        #[arg(value_name = "FILE", required = true)]
+        input: Vec<PathBuf>,
+
+        /// Explicit XSD schema (overrides config.json)
+        #[arg(short, long, value_name = "XSD")]
+        xsd: Option<PathBuf>,
+
         #[arg(long)]
         strict: bool,
     },
 
-    /// Group books by author (TODO)
-    Group {
-        #[arg(short, long, value_name = "DIR")]
-        input: PathBuf,
-        #[arg(short, long, value_name = "DIR")]
-        output: Option<PathBuf>,
-    },
-
-    /// Build book index (TODO)
-    Index {
-        #[arg(short, long, value_name = "DIR")]
-        path: PathBuf,
-        #[arg(short, long, value_name = "FILE", default_value_os_t = PathBuf::from("index.toml"))]
-        output: PathBuf,
-    },
+    Group {/* TODO */},
+    Index {/* TODO */},
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize tracing
     let level = match cli.verbose {
         0 => tracing::Level::INFO,
         1 => tracing::Level::DEBUG,
@@ -81,7 +72,7 @@ fn main() -> Result<()> {
     match &cli.command {
         Commands::Init { force } => {
             tracing::info!("Creating default configuration (force: {})", force);
-            bookweald_rs::config::BookwealdConfig::create_default(*force)?;
+            config::BookwealdConfig::create_default(*force)?;
         }
 
         Commands::Extract { input, output } => {
@@ -104,20 +95,27 @@ fn main() -> Result<()> {
                 .context("Failed to extract archive(s)")?;
         }
 
-        Commands::Validate { input, strict } => {
-            tracing::info!("Validating {:?} (strict: {})", input, strict);
-            // TODO
+        Commands::Validate {
+            input,
+            xsd,
+            strict: _,
+        } => {
+            let xsd_ref = xsd.as_deref().and_then(|p| p.to_str());
+
+            for file in input {
+                if !file.exists() {
+                    anyhow::bail!("File not found: {}", file.display());
+                }
+
+                tracing::info!("Validating {}", file.display());
+                validate::streaming_validate(file, xsd_ref)
+                    .with_context(|| format!("Failed to validate {}", file.display()))?;
+            }
+
+            println!("🎉 All files validated successfully!");
         }
 
-        Commands::Group { input, output } => {
-            tracing::info!("Grouping books from {:?} to {:?} (TODO)", input, output);
-            // TODO — will respect global dry_run if needed later
-        }
-
-        Commands::Index { path, output } => {
-            tracing::info!("Building index {:?} → {:?}", path, output);
-            // TODO
-        }
+        _ => println!("Command not implemented yet"),
     }
 
     Ok(())

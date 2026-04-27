@@ -80,11 +80,11 @@ fn extract_single_zip(
             None => continue,
         };
 
-        if !name.to_string_lossy().to_lowercase().ends_with(".fb2") {
+        let basename = name.file_name().unwrap().to_string_lossy().to_string();
+        if !basename.to_lowercase().ends_with(".fb2") {
             continue;
         }
 
-        let basename = name.file_name().unwrap().to_string_lossy().to_string();
         let out_path = target_dir.join(&basename);
 
         if out_path.exists() {
