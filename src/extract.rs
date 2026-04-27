@@ -18,6 +18,10 @@ pub fn extract_zip_multi(inputs: &[PathBuf], output: &Path, dry_run: bool) -> Re
 
     let stats = ExtractStats::default();
 
+    if dry_run {
+        tracing::info!("**Dry-run**: no files will change");
+    }
+
     for input in inputs {
         tracing::info!("Processing input: {}", input.display());
 
