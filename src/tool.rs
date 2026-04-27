@@ -23,24 +23,21 @@ enum Commands {
         force: bool,
     },
 
-    /// Extract FB2 books from ZIP archive
+    /// Extract FB2 books from ZIP archive (like OCaml `export`)
     Extract {
-        #[arg(short, long, value_name = "PATH")]
+        /// Path to ZIP file or directory containing ZIPs (positional, required)
+        #[arg(value_name = "INPUT", required = true)]
         input: PathBuf,
 
+        /// Output directory
         #[arg(short, long, value_name = "DIR", default_value_os_t = PathBuf::from("library"))]
         output: PathBuf,
-
-        /// Also create author subdirectories (Author/Lastname/)
-        #[arg(short, long)]
-        group: bool,
     },
 
     /// Validate FB2 files
     Validate {
         #[arg(short, long, value_name = "PATH")]
         input: PathBuf,
-
         #[arg(long)]
         strict: bool,
     },
@@ -49,7 +46,6 @@ enum Commands {
     Group {
         #[arg(short, long, value_name = "DIR")]
         input: PathBuf,
-
         #[arg(short, long, value_name = "DIR", default_value_os_t = PathBuf::from("library"))]
         output: PathBuf,
     },
@@ -58,7 +54,6 @@ enum Commands {
     Index {
         #[arg(short, long, value_name = "DIR")]
         path: PathBuf,
-
         #[arg(short, long, value_name = "FILE", default_value_os_t = PathBuf::from("index.toml"))]
         output: PathBuf,
     },
@@ -79,35 +74,23 @@ fn main() -> Result<()> {
         Commands::Init { force } => {
             tracing::info!("Creating default configuration (force: {})", force);
             bookweald_rs::config::BookwealdConfig::create_default(*force)?;
-            return Ok(());
         }
-
-        Commands::Extract {
-            input,
-            output,
-            group,
-        } => {
+        Commands::Extract { input, output } => {
             tracing::info!("Extracting from {:?} → {:?}", input, output);
-            if *group {
-                tracing::info!("Author grouping enabled");
-            }
-            bookweald_rs::extract::extract_zip(input, output, *group)
+            bookweald_rs::extract::extract_zip(input, output)
                 .context("Failed to extract archive")?;
         }
-
         Commands::Validate { input, strict } => {
             tracing::info!("Validating {:?} (strict: {})", input, strict);
-            // bookweald_rs::validate_fb2...
+            // TODO: bookweald_rs::validate_fb2...
         }
-
         Commands::Group { input, output } => {
             tracing::info!("Grouping books from {:?} into {:?}", input, output);
-            // bookweald_rs::group_by_author...
+            // TODO: bookweald_rs::group_by_author...
         }
-
         Commands::Index { path, output } => {
             tracing::info!("Building index {:?} → {:?}", path, output);
-            // bookweald_rs::build_index...
+            // TODO: bookweald_rs::build_index...
         }
     }
 
