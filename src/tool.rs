@@ -9,6 +9,10 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
+    /// Dry-run. If set → no changes
+    #[arg(short, long, value_name = "DRY_RUN")]
+    dry_run: bool,
+
     /// Verbose output (-v, -vv, -vvv)
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
@@ -16,22 +20,22 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Initialize default configuration file (like OCaml `init`)
+    /// Initialize default configuration file
     Init {
         /// Overwrite existing config
         #[arg(long, short)]
         force: bool,
     },
 
-    /// Extract FB2 books from ZIP archive (like OCaml `export`)
+    /// Extract FB2 books from ZIP archive
     Extract {
-        /// Path to ZIP file or directory containing ZIPs (positional, required)
+        /// Path to ZIP file or directory containing ZIPs (required positional)
         #[arg(value_name = "INPUT", required = true)]
         input: PathBuf,
 
-        /// Output directory
-        #[arg(short, long, value_name = "DIR", default_value_os_t = PathBuf::from("library"))]
-        output: PathBuf,
+        /// Output directory. If omitted → uses value from config (target_dir / library_dir)
+        #[arg(short, long, value_name = "DIR")]
+        output: Option<PathBuf>,
     },
 
     /// Validate FB2 files
@@ -75,11 +79,20 @@ fn main() -> Result<()> {
             tracing::info!("Creating default configuration (force: {})", force);
             bookweald_rs::config::BookwealdConfig::create_default(*force)?;
         }
+
         Commands::Extract { input, output } => {
-            tracing::info!("Extracting from {:?} → {:?}", input, output);
-            bookweald_rs::extract::extract_zip(input, output)
+            let config = bookweald_rs::config::BookwealdConfig::load()?;
+
+            let final_output = output
+                .as_deref() // Option<PathBuf> → Option<&Path>
+                .unwrap_or(&config.library_dir);
+
+            tracing::info!("Extracting from {:?} → {:?}", input, final_output);
+
+            bookweald_rs::extract::extract_zip(input, final_output, cli.dry_run)
                 .context("Failed to extract archive")?;
         }
+
         Commands::Validate { input, strict } => {
             tracing::info!("Validating {:?} (strict: {})", input, strict);
             // TODO: bookweald_rs::validate_fb2...
