@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
+use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing;
 
-/// Statistics for the whole extraction run
 #[derive(Default)]
 struct ExtractStats {
     processed_archives: AtomicUsize,
@@ -12,56 +12,50 @@ struct ExtractStats {
     skipped_existing: AtomicUsize,
 }
 
-/// Extract from one or more inputs (files or directories) — pure function
-pub fn extract_zip_multi(inputs: &[PathBuf], output: &Path, dry_run: bool) -> Result<()> {
-    fs::create_dir_all(output).context("Failed to create output directory")?;
+/// Parallel extraction: one ZIP archive per thread (best balance for typical FB2 collections)
+pub fn extract_zip_multi(
+    inputs: &[PathBuf],
+    output: &Path,
+    jobs: usize,
+    dry_run: bool,
+) -> Result<()> {
+    tracing::info!(
+        "Extracting {} ZIP file(s) → {:?} with {} threads (dry_run={})",
+        inputs.len(),
+        output,
+        jobs,
+        dry_run
+    );
 
     let stats = ExtractStats::default();
 
-    if dry_run {
-        tracing::info!("**Dry-run**: no files will change");
+    if !dry_run {
+        fs::create_dir_all(output).context("Failed to create output directory")?;
     }
 
-    for input in inputs {
-        tracing::info!("Processing input: {}", input.display());
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .build()?
+        .install(|| {
+            inputs.par_iter().for_each(|zip_path| {
+                if let Err(e) = extract_single_zip(zip_path, output, &stats, dry_run) {
+                    tracing::error!("Failed to process {}: {}", zip_path.display(), e);
+                }
+            });
+        });
 
-        if input.is_file() && input.extension().map_or(false, |e| e == "zip") {
-            extract_single_zip(input, output, &stats, dry_run)?;
-        } else if input.is_dir() {
-            visit_dirs(input, &mut |zip_path| {
-                tracing::debug!("Found archive: {}", zip_path.display());
-                let _ = extract_single_zip(zip_path, output, &stats, dry_run);
-            })?;
-        } else {
-            tracing::warn!("Skipping invalid input: {}", input.display());
-        }
-    }
-
-    // Final statistics (OCaml-style summary)
     let processed = stats.processed_archives.load(Ordering::Relaxed);
     let extracted = stats.extracted_fb2.load(Ordering::Relaxed);
     let skipped = stats.skipped_existing.load(Ordering::Relaxed);
 
+    tracing::info!("=== Extraction completed ===");
     tracing::info!("Archives processed : {}", processed);
     tracing::info!("FB2 files extracted: {}", extracted);
     tracing::info!("Skipped (existing) : {}", skipped);
-
-    Ok(())
-}
-
-// Pure std recursive visitor (unchanged)
-fn visit_dirs(dir: &Path, cb: &mut dyn FnMut(&Path)) -> Result<()> {
-    if dir.is_dir() {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                visit_dirs(&path, cb)?;
-            } else if path.extension().map_or(false, |e| e == "zip") {
-                cb(&path);
-            }
-        }
+    if dry_run {
+        tracing::info!("[dry-run] No files or directories were created");
     }
+
     Ok(())
 }
 
@@ -73,39 +67,48 @@ fn extract_single_zip(
 ) -> Result<()> {
     stats.processed_archives.fetch_add(1, Ordering::Relaxed);
 
-    let file = fs::File::open(zip_path)?;
-    let mut archive = zip::ZipArchive::new(file)?;
+    let file =
+        fs::File::open(zip_path).with_context(|| format!("Cannot open {}", zip_path.display()))?;
+
+    let mut archive = zip::ZipArchive::new(file)
+        .with_context(|| format!("Not a valid ZIP file: {}", zip_path.display()))?;
 
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i)?;
-        let name = match file.enclosed_name() {
+        let mut entry = archive.by_index(i)?;
+        let name = match entry.enclosed_name() {
             Some(n) => n.to_owned(),
             None => continue,
         };
 
-        let basename = name.file_name().unwrap().to_string_lossy().to_string();
-        if !basename.to_lowercase().ends_with(".fb2") {
+        if !name.to_string_lossy().to_lowercase().ends_with(".fb2") {
             continue;
         }
 
+        let basename = name.file_name().unwrap().to_string_lossy().to_string();
         let out_path = target_dir.join(&basename);
 
         if out_path.exists() {
             stats.skipped_existing.fetch_add(1, Ordering::Relaxed);
-            tracing::debug!("Skipping existing: {}", out_path.display());
+            tracing::debug!("Skipping existing: {}", basename);
             continue;
         }
 
+        stats.extracted_fb2.fetch_add(1, Ordering::Relaxed);
+
         if dry_run {
-            tracing::debug!("✅ Would extract: {}", out_path.display());
-        } else {
-            fs::create_dir_all(target_dir)?;
-            let mut out_file = fs::File::create(&out_path)?;
-            std::io::copy(&mut file, &mut out_file)?;
-            tracing::debug!("✅ Extracted: {}", out_path.display());
+            tracing::debug!("[dry-run] Would extract: {}", basename);
+            continue;
         }
 
-        stats.extracted_fb2.fetch_add(1, Ordering::Relaxed);
+        // Real extraction
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut out_file = fs::File::create(&out_path)?;
+        std::io::copy(&mut entry, &mut out_file)?;
+
+        tracing::debug!("✅ Extracted: {}", basename);
     }
 
     Ok(())

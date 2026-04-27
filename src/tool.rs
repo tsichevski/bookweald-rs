@@ -9,13 +9,17 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// Dry-run. If set → no changes
-    #[arg(short, long, value_name = "DRY_RUN")]
-    dry_run: bool,
-
     /// Verbose output (-v, -vv, -vvv)
-    #[arg(short, long, action = clap::ArgAction::Count)]
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     verbose: u8,
+
+    /// Number of parallel jobs (overrides config.jobs)
+    #[arg(short = 'j', long = "jobs", value_name = "N", global = true)]
+    jobs: Option<usize>,
+
+    /// Do not actually write any files or directories (global)
+    #[arg(long, short = 'n', global = true)]
+    dry_run: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -27,13 +31,13 @@ enum Commands {
         force: bool,
     },
 
-    /// Extract FB2 books from ZIP archive
+    /// Extract FB2 books from one or more ZIP files (flat, parallel)
     Extract {
-        /// Path(s) to ZIP file(s) containing ZIPs (one or more)
-        #[arg(value_name = "INPUT", required = true)]
+        /// ZIP file(s) to extract (required positional arguments)
+        #[arg(value_name = "ZIP", required = true)]
         input: Vec<PathBuf>,
 
-        /// Output directory. If omitted → uses value from config library_dir
+        /// Output directory (defaults to value from config)
         #[arg(short, long, value_name = "DIR")]
         output: Option<PathBuf>,
     },
@@ -46,15 +50,15 @@ enum Commands {
         strict: bool,
     },
 
-    /// Group books by author
+    /// Group books by author (TODO)
     Group {
         #[arg(short, long, value_name = "DIR")]
         input: PathBuf,
-        #[arg(short, long, value_name = "DIR", default_value_os_t = PathBuf::from("library"))]
-        output: PathBuf,
+        #[arg(short, long, value_name = "DIR")]
+        output: Option<PathBuf>,
     },
 
-    /// Build book index
+    /// Build book index (TODO)
     Index {
         #[arg(short, long, value_name = "DIR")]
         path: PathBuf,
@@ -83,26 +87,36 @@ fn main() -> Result<()> {
         Commands::Extract { input, output } => {
             let config = bookweald_rs::config::BookwealdConfig::load()?;
 
-            let final_output = output.as_deref().unwrap_or(&config.library_dir);
+            let final_output = output.as_deref().unwrap_or(&config.target_dir);
 
-            tracing::info!("Extracting {} input(s) → {:?}", input.len(), final_output);
+            // CLI --jobs / -j overrides config, same for --dry-run
+            let jobs = cli.jobs.unwrap_or(config.jobs);
+            let effective_dry_run = cli.dry_run || config.dry_run;
 
-            let dry_run = cli.dry_run || config.dry_run;
-            bookweald_rs::extract::extract_zip_multi(&input, final_output, dry_run)
+            tracing::info!(
+                "Extracting {} ZIP(s) using {} thread(s) (dry_run={})",
+                input.len(),
+                jobs,
+                effective_dry_run
+            );
+
+            bookweald_rs::extract::extract_zip_multi(input, final_output, jobs, effective_dry_run)
                 .context("Failed to extract archive(s)")?;
         }
 
         Commands::Validate { input, strict } => {
             tracing::info!("Validating {:?} (strict: {})", input, strict);
-            // TODO: bookweald_rs::validate_fb2...
+            // TODO
         }
+
         Commands::Group { input, output } => {
-            tracing::info!("Grouping books from {:?} into {:?}", input, output);
-            // TODO: bookweald_rs::group_by_author...
+            tracing::info!("Grouping books from {:?} to {:?} (TODO)", input, output);
+            // TODO — will respect global dry_run if needed later
         }
+
         Commands::Index { path, output } => {
             tracing::info!("Building index {:?} → {:?}", path, output);
-            // TODO: bookweald_rs::build_index...
+            // TODO
         }
     }
 

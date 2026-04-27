@@ -104,8 +104,11 @@ fn default_dry_run() -> bool {
 fn default_max_component_len() -> usize {
     0
 }
+
 fn default_jobs() -> usize {
-    1
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
 }
 
 fn default_drop_existing_log_file_on_start() -> bool {
