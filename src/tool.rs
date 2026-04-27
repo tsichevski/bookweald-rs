@@ -29,11 +29,11 @@ enum Commands {
 
     /// Extract FB2 books from ZIP archive
     Extract {
-        /// Path to ZIP file or directory containing ZIPs (required positional)
+        /// Path(s) to ZIP file(s) containing ZIPs (one or more)
         #[arg(value_name = "INPUT", required = true)]
-        input: PathBuf,
+        input: Vec<PathBuf>,
 
-        /// Output directory. If omitted → uses value from config (target_dir / library_dir)
+        /// Output directory. If omitted → uses value from config library_dir
         #[arg(short, long, value_name = "DIR")]
         output: Option<PathBuf>,
     },
@@ -83,14 +83,13 @@ fn main() -> Result<()> {
         Commands::Extract { input, output } => {
             let config = bookweald_rs::config::BookwealdConfig::load()?;
 
-            let final_output = output
-                .as_deref() // Option<PathBuf> → Option<&Path>
-                .unwrap_or(&config.library_dir);
+            let final_output = output.as_deref().unwrap_or(&config.library_dir);
 
-            tracing::info!("Extracting from {:?} → {:?}", input, final_output);
+            tracing::info!("Extracting {} input(s) → {:?}", input.len(), final_output);
 
-            bookweald_rs::extract::extract_zip(input, final_output, cli.dry_run)
-                .context("Failed to extract archive")?;
+            let dry_run = cli.dry_run || config.dry_run;
+            bookweald_rs::extract::extract_zip_multi(&input, final_output, dry_run)
+                .context("Failed to extract archive(s)")?;
         }
 
         Commands::Validate { input, strict } => {

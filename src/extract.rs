@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing;
 
+/// Statistics for the whole extraction run
 #[derive(Default)]
 struct ExtractStats {
     processed_archives: AtomicUsize,
@@ -11,35 +12,35 @@ struct ExtractStats {
     skipped_existing: AtomicUsize,
 }
 
-/// Flat extraction (no grouping). Pure function – takes explicit paths only.
-pub fn extract_zip(input: &Path, output: &Path, dry_run: bool) -> Result<()> {
+/// Extract from one or more inputs (files or directories) — pure function
+pub fn extract_zip_multi(inputs: &[PathBuf], output: &Path, dry_run: bool) -> Result<()> {
     fs::create_dir_all(output).context("Failed to create output directory")?;
-
-    tracing::info!("Extracting from {:?} → {:?}", input, output);
 
     let stats = ExtractStats::default();
 
-    if input.is_file() && input.extension().map_or(false, |e| e == "zip") {
-        extract_single_zip(input, output, &stats, dry_run)?;
-    } else if input.is_dir() {
-        visit_dirs(input, &mut |zip_path| {
-            tracing::debug!("Processing archive: {}", zip_path.display());
-            let _ = extract_single_zip(zip_path, output, &stats, dry_run);
-        })?;
-    } else {
-        anyhow::bail!("Input must be a .zip file or a directory containing ZIPs");
+    for input in inputs {
+        tracing::info!("Processing input: {}", input.display());
+
+        if input.is_file() && input.extension().map_or(false, |e| e == "zip") {
+            extract_single_zip(input, output, &stats, dry_run)?;
+        } else if input.is_dir() {
+            visit_dirs(input, &mut |zip_path| {
+                tracing::debug!("Found archive: {}", zip_path.display());
+                let _ = extract_single_zip(zip_path, output, &stats, dry_run);
+            })?;
+        } else {
+            tracing::warn!("Skipping invalid input: {}", input.display());
+        }
     }
 
-    // Final statistics (like original OCaml export)
+    // Final statistics (OCaml-style summary)
     let processed = stats.processed_archives.load(Ordering::Relaxed);
     let extracted = stats.extracted_fb2.load(Ordering::Relaxed);
     let skipped = stats.skipped_existing.load(Ordering::Relaxed);
 
-    tracing::info!("=== Extraction completed ===");
     tracing::info!("Archives processed : {}", processed);
     tracing::info!("FB2 files extracted: {}", extracted);
     tracing::info!("Skipped (existing) : {}", skipped);
-    tracing::info!("Output directory   : {}", output.display());
 
     Ok(())
 }
@@ -78,30 +79,29 @@ fn extract_single_zip(
             None => continue,
         };
 
-        if !name.to_string_lossy().to_lowercase().ends_with(".fb2") {
+        let basename = name.file_name().unwrap().to_string_lossy().to_string();
+        if !basename.to_lowercase().ends_with(".fb2") {
             continue;
         }
 
-        let basename = name.file_name().unwrap().to_string_lossy().to_string();
         let out_path = target_dir.join(&basename);
 
         if out_path.exists() {
             stats.skipped_existing.fetch_add(1, Ordering::Relaxed);
-            tracing::info!("Skipping existing: {}", out_path.display());
+            tracing::debug!("Skipping existing: {}", out_path.display());
             continue;
         }
 
-        if !dry_run {
-            if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
+        if dry_run {
+            tracing::debug!("✅ Would extract: {}", out_path.display());
+        } else {
+            fs::create_dir_all(target_dir)?;
             let mut out_file = fs::File::create(&out_path)?;
             std::io::copy(&mut file, &mut out_file)?;
+            tracing::debug!("✅ Extracted: {}", out_path.display());
         }
 
         stats.extracted_fb2.fetch_add(1, Ordering::Relaxed);
-        tracing::info!("✅ Extracted: {}", out_path.display());
     }
 
     Ok(())
