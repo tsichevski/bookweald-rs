@@ -44,15 +44,13 @@ enum Commands {
 
     /// Validate FB2/XML files against XSD (streaming)
     Validate {
-        #[arg(value_name = "FILE", required = true)]
-        input: Vec<PathBuf>,
+        /// Explicit path to file(s) to validate, if not set, the config library_dir will be used
+        #[arg(value_name = "PATH")]
+        input: Option<PathBuf>,
 
         /// Explicit XSD schema (overrides config.json)
         #[arg(short, long, value_name = "XSD")]
         xsd: Option<PathBuf>,
-
-        #[arg(long)]
-        strict: bool,
     },
 
     Group {/* TODO */},
@@ -95,26 +93,21 @@ fn main() -> Result<()> {
                 .context("Failed to extract archive(s)")?;
         }
 
-        Commands::Validate {
-            input,
-            xsd,
-            strict: _,
-        } => {
+        Commands::Validate { input, xsd } => {
+            let config = bookweald_rs::config::BookwealdConfig::load()?;
+            println!("Config: {:?}", &config);
             let xsd_ref = xsd.as_deref().and_then(|p| p.to_str());
-
-            for file in input {
-                if !file.exists() {
-                    anyhow::bail!("File not found: {}", file.display());
-                }
-
-                tracing::info!("Validating {}", file.display());
-                validate::streaming_validate(file, xsd_ref)
-                    .with_context(|| format!("Failed to validate {}", file.display()))?;
+            // FIXME: resolve missing XSD in config.namespaces
+            let input = input.as_deref().unwrap_or(&config.library_dir);
+            if !input.exists() {
+                anyhow::bail!("File not found: {}", input.display());
             }
 
+            tracing::info!("Validating {}", input.display());
+            validate::streaming_validate(input, xsd_ref)
+                .with_context(|| format!("Failed to validate {}", input.display()))?;
             println!("🎉 All files validated successfully!");
         }
-
         _ => println!("Command not implemented yet"),
     }
 

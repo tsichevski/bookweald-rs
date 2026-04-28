@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::path::{Path, PathBuf};
 
 // ------------------------------------------------------------------
 // DatabaseConfig
@@ -127,13 +126,13 @@ fn default_drop_existing_log_file_on_start() -> bool {
     false
 }
 
-pub fn default_library_dir() -> PathBuf {
+fn default_library_dir() -> PathBuf {
     dirs::home_dir()
         .map(|h| h.join("books/incoming"))
         .unwrap_or_else(|| PathBuf::from("~/books/incoming"))
 }
 
-pub fn default_target_dir() -> PathBuf {
+fn default_target_dir() -> PathBuf {
     dirs::home_dir()
         .map(|h| h.join("books/organized"))
         .unwrap_or_else(|| PathBuf::from("~/books/organized"))
@@ -170,19 +169,50 @@ impl Default for BookwealdConfig {
     }
 }
 
-// ------------------------------------------------------------------
-// Loading logic (unchanged from original)
-// ------------------------------------------------------------------
-
-static CONFIG: OnceLock<BookwealdConfig> = OnceLock::new();
+// -------------
+// Loading logic
+// -------------
 
 impl BookwealdConfig {
-    pub fn load() -> anyhow::Result<&'static Self> {
-        CONFIG.get_or_init(|| {
-            // load logic from file or default...
-            Self::default()
-        });
-        Ok(CONFIG.get().unwrap())
+    pub fn load() -> anyhow::Result<Self> {
+        let local = Path::new("config.json");
+        if local.exists() {
+            return Self::load_from(local);
+        }
+
+        if let Some(mut p) = dirs::config_dir() {
+            p.push("bookweald/config.json");
+            if p.exists() {
+                return Self::load_from(&p);
+            }
+        }
+
+        anyhow::bail!("No config.json found.\nRun `bookweald init` (or `bookweald init --force`)");
+    }
+
+    fn load_from(path: &Path) -> anyhow::Result<Self> {
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+
+        let cfg: BookwealdConfig = json5::from_str(&content).map_err(|e| {
+            let (line, column) = match e.position() {
+                Some(pos) => (pos.line, pos.column),
+                None => (0, 0),
+            };
+
+            anyhow::anyhow!(
+                "❌ Invalid configuration in {}\n\
+                 → Line {}, Column {}\n\
+                 Error: {}\n\n\
+                 Run `bookweald init --force` to regenerate a clean default.",
+                path.display(),
+                line,
+                column,
+                e
+            )
+        })?;
+
+        Ok(cfg)
     }
 
     /// Create default config.json

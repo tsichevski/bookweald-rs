@@ -1,33 +1,29 @@
 use crate::config::BookwealdConfig;
+use anyhow::{Context, Result, anyhow, bail};
 use fastxml::schema::{StreamValidator, parse_xsd};
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read};
 use std::path::Path;
 use std::sync::Arc;
 
-pub fn streaming_validate(
-    path: &Path,
-    explicit_xsd: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn streaming_validate(path: &Path, explicit_xsd: Option<&str>) -> Result<()> {
     let filename = path
         .file_name()
         .and_then(|s| s.to_str())
-        .ok_or_else(|| format!("Invalid filename: {}", path.display()))?;
+        .ok_or_else(|| anyhow!("Invalid filename: {}", path.display()))?;
 
-    println!("🔍 Streaming XSD validation with fastxml: {}", filename);
+    println!("🔍 Streaming XSD validation: {}", filename);
 
     let is_zip = path.extension().and_then(|e| e.to_str()) == Some("zip");
 
     // ── Prepare reader (ZIP requires special handling for lifetime) ──
     let raw_reader: Box<dyn Read> = if is_zip {
-        println!("   (decompressing .fb2.zip into memory for validation)");
+        println!(" (decompressing .fb2.zip into memory for validation)");
         let zip_file = File::open(path)?;
         let mut archive = zip::ZipArchive::new(zip_file)?;
         let mut entry = archive.by_index(0)?;
-
         let mut content = Vec::new();
         entry.read_to_end(&mut content)?;
-
         Box::new(Cursor::new(content))
     } else {
         // Normal .fb2 → true streaming, no full load
@@ -38,35 +34,30 @@ pub fn streaming_validate(
 
     // ── Determine which schema to use ──
     let errors = if let Some(xsd) = explicit_xsd {
-        println!("   Using explicit schema: {}", xsd);
-        let xsd_bytes = std::fs::read(xsd)?;
+        println!(" Using explicit schema: {}", xsd);
+        let xsd_bytes =
+            std::fs::read(xsd).with_context(|| format!("Failed to read XSD file: {}", xsd))?;
         let schema = Arc::new(parse_xsd(&xsd_bytes)?);
-
         StreamValidator::new(schema)
             .with_max_errors(200)
             .validate(buf_reader)?
     } else {
-        println!("   Looking up schema by namespace from config.json...");
+        println!(" Looking up schema by namespace from config.json...");
         let config = BookwealdConfig::load()?;
-
         let fb2_ns = "http://www.gribuser.ru/xml/fictionbook/2.0";
 
         if let Some(schema_path) = config.get_schema_for_namespace(fb2_ns) {
-            println!(
-                "   Using mapped schema for FictionBook 2.0: {}",
-                schema_path
-            );
-            let xsd_bytes = std::fs::read(&schema_path)?;
+            println!(" Using mapped schema for FictionBook 2.0: {}", schema_path);
+            let xsd_bytes = std::fs::read(&schema_path)
+                .with_context(|| format!("Failed to read schema: {}", schema_path))?;
             let schema = Arc::new(parse_xsd(&xsd_bytes)?);
-
             StreamValidator::new(schema)
                 .with_max_errors(200)
                 .validate(buf_reader)?
         } else {
-            return Err(
+            bail!(
                 "No schema mapping found in config.json for this document.\n\
                  Please add it under \"namespaces\" or use --xsd flag."
-                    .into(),
             );
         }
     };
@@ -87,17 +78,15 @@ pub fn streaming_validate(
                 fastxml::ErrorLevel::Error => "ERROR",
                 fastxml::ErrorLevel::Fatal => "FATAL",
             };
-
             let line = err
                 .line()
                 .map(|l| l.to_string())
                 .unwrap_or_else(|| "?".to_string());
-
-            println!("   [{}] line {}: {}", level, line, err.message);
+            println!(" [{}] line {}: {}", level, line, err.message);
         }
         if errors.len() > 15 {
-            println!("   ... and {} more errors", errors.len() - 15);
+            println!(" ... and {} more errors", errors.len() - 15);
         }
-        Err("XSD validation failed".into())
+        Err(anyhow!("XSD validation failed"))
     }
 }
