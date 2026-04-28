@@ -1,10 +1,9 @@
-// src/main.rs
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod config;
-mod validate; // ← direct in src/
+mod validate;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -46,7 +45,7 @@ enum Commands {
     Validate {
         /// Explicit path to file(s) to validate, if not set, the config library_dir will be used
         #[arg(value_name = "PATH")]
-        input: Option<PathBuf>,
+        input: Vec<PathBuf>,
 
         /// Explicit XSD schema (overrides config.json)
         #[arg(short, long, value_name = "XSD")]
@@ -55,6 +54,39 @@ enum Commands {
 
     Group {/* TODO */},
     Index {/* TODO */},
+}
+
+/// Recursively scans the given list of paths (files or directories)
+/// and collects all files with extensions `.fb2` or `.fb2.zip` (case-insensitive).
+///
+/// Returns a `Vec<PathBuf>` of matching file paths.
+pub fn collect_fb2_files(path: &PathBuf) -> Result<Vec<PathBuf>> {
+    if !path.exists() {
+        anyhow::bail!("Path does not exist: {}", path.display());
+    }
+
+    fn is_fb2_file(path: &Path) -> bool {
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_lowercase());
+
+        matches!(ext.as_deref(), Some("fb2") | Some("fb2.zip"))
+    }
+    let mut fb2_files = Vec::new();
+    if path.is_file() {
+        if is_fb2_file(path) {
+            fb2_files.push(path.clone());
+        }
+    } else {
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            let path = entry.path();
+            fb2_files.extend(collect_fb2_files(&path)?);
+        }
+    }
+
+    Ok(fb2_files)
 }
 
 fn main() -> Result<()> {
@@ -94,18 +126,15 @@ fn main() -> Result<()> {
         }
 
         Commands::Validate { input, xsd } => {
-            let config = bookweald_rs::config::BookwealdConfig::load()?;
-            println!("Config: {:?}", &config);
             let xsd_ref = xsd.as_deref().and_then(|p| p.to_str());
-            // FIXME: resolve missing XSD in config.namespaces
-            let input = input.as_deref().unwrap_or(&config.library_dir);
-            if !input.exists() {
-                anyhow::bail!("File not found: {}", input.display());
+            let mut files: Vec<PathBuf> = Vec::new();
+            for path in input {
+                files.extend(collect_fb2_files(path)?);
             }
-
-            tracing::info!("Validating {}", input.display());
-            validate::validate(input, xsd_ref)
-                .with_context(|| format!("Failed to validate {}", input.display()))?;
+            for path in &files {
+                validate::validate(&path, xsd_ref)
+                    .with_context(|| format!("Failed to validate {}", path.display()))?
+            }
             println!("🎉 All files validated successfully!");
         }
         _ => println!("Command not implemented yet"),

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 // ------------------------------------------------------------------
@@ -28,12 +27,6 @@ pub struct DatabaseConfig {
 
     #[serde(default = "default_admin_passwd")]
     pub admin_passwd: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct NamespaceConfig {
-    #[serde(default)]
-    pub namespaces: HashMap<String, String>,
 }
 
 fn default_host() -> String {
@@ -100,10 +93,6 @@ pub struct BookwealdConfig {
 
     #[serde(default)]
     pub database: DatabaseConfig,
-
-    // ── Namespace → Schema mapping ──
-    #[serde(default)]
-    pub namespaces: NamespaceConfig,
 }
 
 // --------------------- Default helpers ---------------------
@@ -140,7 +129,7 @@ fn default_target_dir() -> PathBuf {
 
 impl Default for BookwealdConfig {
     fn default() -> Self {
-        let mut cfg = Self {
+        Self {
             library_dir: default_library_dir(),
             target_dir: default_target_dir(),
             dry_run: default_dry_run(),
@@ -152,20 +141,7 @@ impl Default for BookwealdConfig {
             drop_existing_log_file_on_start: default_drop_existing_log_file_on_start(),
             log_level: None,
             database: DatabaseConfig::default(),
-            namespaces: NamespaceConfig::default(),
-        };
-
-        // Built-in FictionBook defaults
-        cfg.namespaces.namespaces.insert(
-            "http://www.gribuser.ru/xml/fictionbook/2.0".to_string(),
-            "schemas/FictionBook2.0.xsd".to_string(),
-        );
-        cfg.namespaces.namespaces.insert(
-            "http://www.gribuser.ru/xml/fictionbook/2.1".to_string(),
-            "schemas/FictionBook2.1.xsd".to_string(),
-        );
-
-        cfg
+        }
     }
 }
 
@@ -242,63 +218,5 @@ impl BookwealdConfig {
 
         println!("✅ Created default configuration: {}", path.display());
         Ok(true)
-    }
-
-    pub fn get_schema_for_namespace(&self, ns: &str) -> Option<String> {
-        self.namespaces.namespaces.get(ns).cloned()
-    }
-}
-
-// =====
-// TESTS
-// =====
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_default_config_has_fictionbook_namespaces() {
-        let cfg = BookwealdConfig::default();
-        assert!(
-            cfg.namespaces
-                .namespaces
-                .contains_key("http://www.gribuser.ru/xml/fictionbook/2.0")
-        );
-        assert!(
-            cfg.namespaces
-                .namespaces
-                .contains_key("http://www.gribuser.ru/xml/fictionbook/2.1")
-        );
-    }
-
-    #[test]
-    fn test_get_schema_for_namespace() {
-        let cfg = BookwealdConfig::default();
-        assert_eq!(
-            cfg.get_schema_for_namespace("http://www.gribuser.ru/xml/fictionbook/2.0"),
-            Some("schemas/FictionBook2.0.xsd".to_string())
-        );
-        assert_eq!(cfg.get_schema_for_namespace("unknown-ns"), None);
-    }
-
-    #[test]
-    fn test_namespace_config_deserialization() {
-        let json = r#"
-        {
-            "library_dir": "library",
-            "target_dir": "target",
-            "namespaces": {
-                "http://www.gribuser.ru/xml/fictionbook/2.0": "custom/FictionBook2.0.xsd",
-                "http://example.com/schema": "schemas/custom.xsd"
-            }
-        }
-        "#;
-
-        let cfg: BookwealdConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            cfg.get_schema_for_namespace("http://www.gribuser.ru/xml/fictionbook/2.0"),
-            Some("custom/FictionBook2.0.xsd".to_string())
-        );
     }
 }
