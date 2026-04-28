@@ -104,7 +104,7 @@ fn main() -> Result<()> {
             }
 
             tracing::info!("Validating {}", input.display());
-            validate::streaming_validate(input, xsd_ref)
+            validate::validate(input, xsd_ref)
                 .with_context(|| format!("Failed to validate {}", input.display()))?;
             println!("🎉 All files validated successfully!");
         }

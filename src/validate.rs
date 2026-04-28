@@ -1,104 +1,73 @@
 // src/validate.rs
 use crate::config::BookwealdConfig;
 use anyhow::{Context, Result};
-use fastxml::schema::{StreamValidator, parse_xsd};
-use std::fs::File;
-use std::io::{BufReader, Cursor, Read};
+use libxml::parser::Parser;
+use libxml::schemas::{SchemaParserContext, SchemaValidationContext};
 use std::path::Path;
-use std::sync::Arc;
 
-pub fn streaming_validate(path: &Path, explicit_xsd: Option<&str>) -> Result<()> {
+pub fn validate(path: &Path, explicit_xsd: Option<&str>) -> Result<()> {
     let filename = path
         .file_name()
         .and_then(|s| s.to_str())
         .ok_or_else(|| anyhow::anyhow!("Invalid filename: {}", path.display()))?;
 
-    println!("🔍 Validating: {}", filename);
+    println!("🔍 Validating with libxml2: {}", filename);
 
-    let is_zip = path.extension().and_then(|e| e.to_str()) == Some("zip");
+    // 1. Parse the FB2 document
+    let parser = Parser::default();
+    let doc = parser
+        .parse_file(path.to_str().unwrap_or(""))
+        .context("Failed to parse XML document")?;
 
-    let raw_reader: Box<dyn Read> = if is_zip {
-        println!("   (ZIP → memory decompress)");
-        let zip_file = File::open(path)?;
-        let mut archive = zip::ZipArchive::new(zip_file)?;
-        let mut entry = archive.by_index(0)?;
-
-        let mut content = Vec::new();
-        entry.read_to_end(&mut content)?;
-        Box::new(Cursor::new(content))
-    } else {
-        Box::new(File::open(path)?)
-    };
-
-    let buf_reader = BufReader::new(raw_reader);
-
-    let errors = if let Some(xsd) = explicit_xsd {
+    // 2. Load schema
+    let mut schema_ctx = if let Some(xsd) = explicit_xsd {
         println!("   Using explicit schema: {}", xsd);
-        let xsd_bytes = std::fs::read(xsd).with_context(|| format!("Cannot read XSD {}", xsd))?;
-        let schema = Arc::new(parse_xsd(&xsd_bytes)?);
-
-        StreamValidator::new(schema)
-            .with_max_errors(500)
-            .validate(buf_reader)?
+        SchemaParserContext::from_file(xsd)
     } else {
-        println!("   Using namespace mapping from config.json...");
+        println!("   Looking up schema from config.json...");
         let config = BookwealdConfig::load()?;
         let fb2_ns = "http://www.gribuser.ru/xml/fictionbook/2.0";
 
         if let Some(schema_path) = config.get_schema_for_namespace(fb2_ns) {
-            println!("   Schema: {}", schema_path);
-            let xsd_bytes = std::fs::read(&schema_path)
-                .with_context(|| format!("Cannot read schema {}", schema_path))?;
-            let schema = Arc::new(parse_xsd(&xsd_bytes)?);
-
-            StreamValidator::new(schema)
-                .with_max_errors(500)
-                .validate(buf_reader)?
+            println!("   Using mapped schema: {}", schema_path);
+            SchemaParserContext::from_file(&schema_path)
         } else {
-            anyhow::bail!("No schema mapping in config.json for FictionBook. Use --xsd");
+            anyhow::bail!(
+                "No schema mapping found in config.json for FictionBook. Use --xsd flag."
+            );
         }
     };
 
-    if errors.is_empty() {
-        println!("✅ {} is valid", filename);
-        Ok(())
-    } else {
-        println!(
-            "❌ {} failed validation ({} issues):",
-            filename,
-            errors.len()
-        );
-        let mut has_fatal = false;
+    // 3. Create validation context
+    let mut validation_ctx = SchemaValidationContext::from_parser(&mut schema_ctx)
+        .map_err(|e| anyhow::anyhow!("Failed to create validation context: {:?}", e))?;
 
-        for err in errors.iter().take(12) {
-            let level = match err.level {
-                fastxml::ErrorLevel::Warning => "WARN",
-                fastxml::ErrorLevel::Error => {
-                    has_fatal = true;
-                    "ERROR"
-                }
-                fastxml::ErrorLevel::Fatal => {
-                    has_fatal = true;
-                    "FATAL"
-                }
-            };
-            let line = err
-                .line()
-                .map(|l| l.to_string())
-                .unwrap_or_else(|| "?".to_string());
-
-            println!("   [{}] line {}: {}", level, line, err.message);
-        }
-
-        if errors.len() > 12 {
-            println!("   ... and {} more issues", errors.len() - 12);
-        }
-
-        if has_fatal {
-            anyhow::bail!("Validation failed for {}", filename);
-        } else {
-            println!("⚠️  Only warnings — treated as passed");
+    // 4. Validate
+    match validation_ctx.validate_document(&doc) {
+        Ok(()) => {
+            println!("✅ {} is valid (libxml2)", filename);
             Ok(())
+        }
+        Err(errors) => {
+            println!(
+                "❌ {} failed validation ({} errors):",
+                filename,
+                errors.len()
+            );
+            for err in errors.iter().take(15) {
+                let line = err.line.map_or("?".to_string(), |l| l.to_string());
+                // Fixed: clone() because message is Option<String>
+                let message = err
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| "Unknown error".to_string());
+
+                println!("   [ERROR] line {}: {}", line, message);
+            }
+            if errors.len() > 15 {
+                println!("   ... and {} more errors", errors.len() - 15);
+            }
+            anyhow::bail!("libxml2 validation failed for {}", filename);
         }
     }
 }
