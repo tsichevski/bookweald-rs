@@ -1,6 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    usize,
+};
 
 use bookweald_rs::config::BookwealdConfig;
 mod validate;
@@ -50,11 +53,11 @@ enum Commands {
 
     /// Validate FB2/XML files against XSD (streaming)
     Validate {
-        /// Explicit path to file(s) to validate, if not set, the config library_dir will be used
-        #[arg(value_name = "PATH")]
+        /// Paths to files or directories to validate
+        #[arg(value_name = "PATH", required = true, num_args(1..))]
         input: Vec<PathBuf>,
 
-        /// Explicit XSD schema (overrides config.json)
+        /// Optional XSD schema, if missing, only base XML structure conformance will be validate
         #[arg(short, long, value_name = "XSD")]
         xsd: Option<PathBuf>,
     },
@@ -96,6 +99,19 @@ pub fn collect_fb2_files(path: &PathBuf) -> Result<Vec<PathBuf>> {
     Ok(fb2_files)
 }
 
+fn run_parallel<OP, R>(jobs: usize, op: OP) -> R
+where
+    OP: FnOnce() -> R + Send,
+    R: Send,
+{
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .build()
+        .unwrap();
+
+    pool.install(op)
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -118,10 +134,7 @@ fn main() -> Result<()> {
             force,
         } => {
             let config = bookweald_rs::config::BookwealdConfig::load()?;
-
             let final_output = output.as_deref().unwrap_or(&config.library_dir);
-
-            // CLI --jobs / -j overrides config, same for --dry-run
             let jobs = cli.jobs.unwrap_or(config.jobs);
             let effective_dry_run = cli.dry_run || config.dry_run;
 
@@ -132,32 +145,35 @@ fn main() -> Result<()> {
                 effective_dry_run,
                 force
             );
-            let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(jobs)
-                .build()
-                .unwrap();
-
-            pool.install(|| {
+            run_parallel(jobs, || {
                 bookweald_rs::extract::extract_zip_multi(
                     input,
                     final_output,
                     effective_dry_run,
                     *force,
-                );
-            });
+                )
+            })
         }
 
         Commands::Validate { input, xsd } => {
+            let config = bookweald_rs::config::BookwealdConfig::load()?;
+            let jobs = cli.jobs.unwrap_or(config.jobs);
+            let effective_dry_run = cli.dry_run || config.dry_run;
             let xsd_ref = xsd.as_deref().and_then(|p| p.to_str());
+
+            tracing::info!(
+                "Validating {} locations using {} thread(s) (dry_run={})",
+                input.len(),
+                jobs,
+                effective_dry_run,
+            );
             let mut files: Vec<PathBuf> = Vec::new();
             for path in input {
                 files.extend(collect_fb2_files(path)?);
             }
-            for path in &files {
-                validate::validate(&path, xsd_ref)
-                    .with_context(|| format!("Failed to validate {}", path.display()))?
-            }
-            println!("🎉 All files validated successfully!");
+            run_parallel(jobs, || {
+                validate::validate(&files, xsd_ref, effective_dry_run)
+            });
         }
         _ => println!("Command not implemented yet"),
     }
