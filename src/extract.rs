@@ -85,14 +85,10 @@ fn extract_single_zip(
                 }
             },
             |archive, i| {
-                let mut entry = match archive.by_index(i).with_context(|| {
+                let mut entry = archive.by_index(i).with_context(|| {
                     format!("Cannot read ZIP entry {i} in file: {}", zip_path.display())
-                }) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Err(e);
-                    }
-                };
+                })?;
+
                 let name = match entry.enclosed_name() {
                     Some(n) => n.to_owned(),
                     None => return Ok(()),
@@ -117,30 +113,21 @@ fn extract_single_zip(
 
                 // Real extraction
                 if let Some(parent) = out_path.parent() {
-                    match fs::create_dir_all(parent)
-                        .with_context(|| format!("Cannot create directory: {}", parent.display()))
-                    {
-                        Ok(v) => v,
-                        Err(e) => return Err(e),
-                    }
+                    fs::create_dir_all(parent).with_context(|| {
+                        format!("Cannot create directory: {}", parent.display())
+                    })?;
                 }
 
-                let mut out_file = match fs::File::create(&out_path).with_context(|| {
+                let mut out_file = fs::File::create(&out_path).with_context(|| {
                     format!("Cannot read ZIP entry {i} in file: {}", zip_path.display())
-                }) {
-                    Ok(v) => v,
-                    Err(e) => return Err(e),
-                };
+                })?;
 
-                match std::io::copy(&mut entry, &mut out_file).with_context(|| {
+                std::io::copy(&mut entry, &mut out_file).with_context(|| {
                     format!("Cannot copy ZIP entry {i} to file: {}", out_path.display())
-                }) {
-                    Ok(_) => {
-                        tracing::debug!("✅ Extracted: {}", basename);
-                        Ok(())
-                    }
-                    Err(e) => Err(e),
-                }
+                })?;
+
+                tracing::debug!("✅ Extracted: {}", basename);
+                Ok(())
             },
         )
         .collect()
