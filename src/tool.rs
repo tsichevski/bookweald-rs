@@ -125,14 +125,26 @@ fn main() -> Result<()> {
             let jobs = cli.jobs.unwrap_or(config.jobs);
             let effective_dry_run = cli.dry_run || config.dry_run;
 
-            bookweald_rs::extract::extract_zip_multi(
-                input,
-                final_output,
+            tracing::info!(
+                "Extracting {} ZIP(s) using {} thread(s) (dry_run={}, force={})",
+                input.len(),
                 jobs,
                 effective_dry_run,
-                *force,
-            )
-            .context("Failed to extract archive(s)")?;
+                force
+            );
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(jobs)
+                .build()
+                .unwrap();
+
+            pool.install(|| {
+                bookweald_rs::extract::extract_zip_multi(
+                    input,
+                    final_output,
+                    effective_dry_run,
+                    *force,
+                );
+            });
         }
 
         Commands::Validate { input, xsd } => {

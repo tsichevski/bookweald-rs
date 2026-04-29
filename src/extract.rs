@@ -1,58 +1,54 @@
+//! Module responsible for extracting FB2 books from ZIP archives.
+//!
+//! This module provides high-performance, parallel extraction of `.fb2` files
+//! using Rayon for multi-threading. It supports
+//! dry-run mode, force-overwrite, and safe handling of ZIP entries.
+
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing;
 
-pub fn extract_zip_multi(
-    inputs: &[PathBuf],
-    output: &Path,
-    num_threads: usize,
-    dry_run: bool,
-    force: bool,
-) -> Result<()> {
+/// Extracts multiple ZIP archives in parallel, pulling out FB2 books.
+///
+/// # Arguments
+///
+/// * `inputs` - List of paths to ZIP files.
+/// * `output` - Target directory where FB2 files will be placed.
+/// * `dry_run` - If `true`, only logs what *would* happen without writing anything.
+/// * `force` - If `true`, overwrites existing FB2 files in the output directory.
+pub fn extract_zip_multi(inputs: &[PathBuf], output: &Path, dry_run: bool, force: bool) {
+    let (successes, errors): (Vec<_>, Vec<_>) = inputs
+        .par_iter()
+        .flat_map(|zip_path| extract_single_zip(zip_path, output, dry_run, force))
+        .partition(Result::is_ok);
+
+    let num_success = successes.len();
+    let num_errors = errors.len();
+
     tracing::info!(
-        "Extracting {} ZIP(s) using {} thread(s) (dry_run={}, force={})",
+        "Extraction completed: {} FB2 files found in {} inputs ({} succeeded, {} failed)",
+        num_success + num_errors,
         inputs.len(),
-        num_threads,
-        dry_run,
-        force
+        num_success,
+        num_errors
     );
-
-    if !dry_run {
-        fs::create_dir_all(output).context("Failed to create output directory")?;
-    }
-
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(num_threads)
-        .build()
-        .unwrap();
-
-    pool.install(|| {
-        let (successes, errors): (Vec<_>, Vec<_>) = inputs
-            .par_iter()
-            .flat_map(|zip_path| extract_single_zip(zip_path, output, dry_run, force))
-            .partition(Result::is_ok);
-
-        let num_success = successes.len();
-        let num_errors = errors.len();
-
-        tracing::info!(
-            "Extraction completed: {} FB2 files found in {} inputs ({} succeeded, {} failed)",
-            num_success + num_errors,
-            inputs.len(),
-            num_success,
-            num_errors
-        );
-    });
 
     if dry_run {
         tracing::info!("[dry-run] No files or directories were created");
     }
-
-    Ok(())
 }
 
+/// Processes a single ZIP archive and extracts all contained `.fb2` files.
+///
+/// This function opens the ZIP once, then uses a parallel iterator with
+/// `map_init` + unsafe re-opening (via metadata cloning) to allow concurrent
+/// access to different entries without locking the whole archive.
+///
+/// # Returns
+///
+/// A `Vec<Result<()>>` — one result per FB2 file found (or per error).
 fn extract_single_zip(
     zip_path: &Path,
     target_dir: &Path,
