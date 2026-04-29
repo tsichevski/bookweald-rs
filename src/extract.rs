@@ -4,7 +4,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing;
 
-/// Parallel extraction: one ZIP archive per thread (best balance for typical FB2 collections)
 pub fn extract_zip_multi(
     inputs: &[PathBuf],
     output: &Path,
@@ -69,7 +68,7 @@ fn extract_single_zip(
         }
     };
 
-    let mut archive = match zip::ZipArchive::new(file)
+    let archive = match zip::ZipArchive::new(file)
         .with_context(|| format!("Not a valid ZIP file: {}", zip_path.display()))
     {
         Ok(v) => v,
@@ -79,74 +78,74 @@ fn extract_single_zip(
         }
     };
 
-    for i in 0..archive.len() {
-        let mut entry = match archive
-            .by_index(i)
-            .with_context(|| format!("Cannot read ZIP entry {i} in file: {}", zip_path.display()))
-        {
-            Ok(v) => v,
-            Err(e) => {
-                result.push(Err(e));
-                return result;
-            }
-        };
-        let name = match entry.enclosed_name() {
-            Some(n) => n.to_owned(),
-            None => continue,
-        };
-
-        let basename = name.file_name().unwrap().to_string_lossy().to_string();
-        if !basename.to_lowercase().ends_with(".fb2") {
-            continue;
-        }
-
-        let out_path = target_dir.join(&basename);
-
-        if out_path.exists() && !force {
-            tracing::debug!("Skipping existing (use --force to overwrite): {}", basename);
-            continue;
-        }
-
-        if dry_run {
-            tracing::debug!("[dry-run] Would extract: {}", basename);
-            continue;
-        }
-
-        // Real extraction
-        if let Some(parent) = out_path.parent() {
-            match fs::create_dir_all(parent)
-                .with_context(|| format!("Cannot create directory: {}", parent.display()))
+    (0..archive.len())
+        .into_par_iter()
+        .map_init(
             {
-                Ok(v) => v,
-                Err(e) => {
-                    result.push(Err(e));
-                    continue;
+                let metadata = archive.metadata().clone();
+                move || {
+                    let file = fs::File::open(zip_path).unwrap();
+                    unsafe { zip::ZipArchive::unsafe_new_with_metadata(file, metadata.clone()) }
                 }
-            }
-        }
+            },
+            |archive, i| {
+                let mut entry = match archive.by_index(i).with_context(|| {
+                    format!("Cannot read ZIP entry {i} in file: {}", zip_path.display())
+                }) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(e);
+                    }
+                };
+                let name = match entry.enclosed_name() {
+                    Some(n) => n.to_owned(),
+                    None => return Ok(()),
+                };
 
-        let mut out_file = match fs::File::create(&out_path)
-            .with_context(|| format!("Cannot read ZIP entry {i} in file: {}", zip_path.display()))
-        {
-            Ok(v) => v,
-            Err(e) => {
-                result.push(Err(e));
-                continue;
-            }
-        };
+                let basename = name.file_name().unwrap().to_string_lossy().to_string();
+                if !basename.to_lowercase().ends_with(".fb2") {
+                    return Ok(());
+                }
 
-        match std::io::copy(&mut entry, &mut out_file)
-            .with_context(|| format!("Cannot copy ZIP entry {i} to file: {}", out_path.display()))
-        {
-            Ok(_) => result.push(Ok(())),
-            Err(e) => {
-                result.push(Err(e));
-                continue;
-            }
-        };
+                let out_path = target_dir.join(&basename);
 
-        tracing::debug!("✅ Extracted: {}", basename);
-    }
+                if out_path.exists() && !force {
+                    tracing::debug!("Skipping existing (use --force to overwrite): {}", basename);
+                    return Ok(());
+                }
 
-    result
+                if dry_run {
+                    tracing::debug!("[dry-run] Would extract: {}", basename);
+                    return Ok(());
+                }
+
+                // Real extraction
+                if let Some(parent) = out_path.parent() {
+                    match fs::create_dir_all(parent)
+                        .with_context(|| format!("Cannot create directory: {}", parent.display()))
+                    {
+                        Ok(v) => v,
+                        Err(e) => return Err(e),
+                    }
+                }
+
+                let mut out_file = match fs::File::create(&out_path).with_context(|| {
+                    format!("Cannot read ZIP entry {i} in file: {}", zip_path.display())
+                }) {
+                    Ok(v) => v,
+                    Err(e) => return Err(e),
+                };
+
+                match std::io::copy(&mut entry, &mut out_file).with_context(|| {
+                    format!("Cannot copy ZIP entry {i} to file: {}", out_path.display())
+                }) {
+                    Ok(_) => {
+                        tracing::debug!("✅ Extracted: {}", basename);
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                }
+            },
+        )
+        .collect()
 }
