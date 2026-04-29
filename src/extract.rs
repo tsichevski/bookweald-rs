@@ -2,56 +2,51 @@ use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing;
-
-#[derive(Default)]
-struct ExtractStats {
-    processed_archives: AtomicUsize,
-    extracted_fb2: AtomicUsize,
-    skipped_existing: AtomicUsize,
-}
 
 /// Parallel extraction: one ZIP archive per thread (best balance for typical FB2 collections)
 pub fn extract_zip_multi(
     inputs: &[PathBuf],
     output: &Path,
-    jobs: usize,
+    num_threads: usize,
     dry_run: bool,
+    force: bool,
 ) -> Result<()> {
     tracing::info!(
-        "Extracting {} ZIP file(s) → {:?} with {} threads (dry_run={})",
+        "Extracting {} ZIP(s) using {} thread(s) (dry_run={}, force={})",
         inputs.len(),
-        output,
-        jobs,
-        dry_run
+        num_threads,
+        dry_run,
+        force
     );
-
-    let stats = ExtractStats::default();
 
     if !dry_run {
         fs::create_dir_all(output).context("Failed to create output directory")?;
     }
 
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(jobs)
-        .build()?
-        .install(|| {
-            inputs.par_iter().for_each(|zip_path| {
-                if let Err(e) = extract_single_zip(zip_path, output, &stats, dry_run) {
-                    tracing::error!("Failed to process {}: {}", zip_path.display(), e);
-                }
-            });
-        });
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
 
-    let processed = stats.processed_archives.load(Ordering::Relaxed);
-    let extracted = stats.extracted_fb2.load(Ordering::Relaxed);
-    let skipped = stats.skipped_existing.load(Ordering::Relaxed);
+    pool.install(|| {
+        let (successes, errors): (Vec<_>, Vec<_>) = inputs
+            .par_iter()
+            .flat_map(|zip_path| extract_single_zip(zip_path, output, dry_run, force))
+            .partition(Result::is_ok);
 
-    tracing::info!("=== Extraction completed ===");
-    tracing::info!("Archives processed : {}", processed);
-    tracing::info!("FB2 files extracted: {}", extracted);
-    tracing::info!("Skipped (existing) : {}", skipped);
+        let num_success = successes.len();
+        let num_errors = errors.len();
+
+        tracing::info!(
+            "Extraction completed: {} FB2 files found in {} inputs ({} succeeded, {} failed)",
+            num_success + num_errors,
+            inputs.len(),
+            num_success,
+            num_errors
+        );
+    });
+
     if dry_run {
         tracing::info!("[dry-run] No files or directories were created");
     }
@@ -62,19 +57,39 @@ pub fn extract_zip_multi(
 fn extract_single_zip(
     zip_path: &Path,
     target_dir: &Path,
-    stats: &ExtractStats,
     dry_run: bool,
-) -> Result<()> {
-    stats.processed_archives.fetch_add(1, Ordering::Relaxed);
+    force: bool,
+) -> Vec<Result<()>> {
+    let mut result: Vec<Result<()>> = Vec::new();
+    let file = match fs::File::open(zip_path) {
+        Ok(file) => file,
+        Err(e) => {
+            result.push(Err(e.into()));
+            return result;
+        }
+    };
 
-    let file =
-        fs::File::open(zip_path).with_context(|| format!("Cannot open {}", zip_path.display()))?;
-
-    let mut archive = zip::ZipArchive::new(file)
-        .with_context(|| format!("Not a valid ZIP file: {}", zip_path.display()))?;
+    let mut archive = match zip::ZipArchive::new(file)
+        .with_context(|| format!("Not a valid ZIP file: {}", zip_path.display()))
+    {
+        Ok(v) => v,
+        Err(e) => {
+            result.push(Err(e));
+            return result;
+        }
+    };
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i)?;
+        let mut entry = match archive
+            .by_index(i)
+            .with_context(|| format!("Cannot read ZIP entry {i} in file: {}", zip_path.display()))
+        {
+            Ok(v) => v,
+            Err(e) => {
+                result.push(Err(e));
+                return result;
+            }
+        };
         let name = match entry.enclosed_name() {
             Some(n) => n.to_owned(),
             None => continue,
@@ -87,13 +102,10 @@ fn extract_single_zip(
 
         let out_path = target_dir.join(&basename);
 
-        if out_path.exists() {
-            stats.skipped_existing.fetch_add(1, Ordering::Relaxed);
-            tracing::debug!("Skipping existing: {}", basename);
+        if out_path.exists() && !force {
+            tracing::debug!("Skipping existing (use --force to overwrite): {}", basename);
             continue;
         }
-
-        stats.extracted_fb2.fetch_add(1, Ordering::Relaxed);
 
         if dry_run {
             tracing::debug!("[dry-run] Would extract: {}", basename);
@@ -102,14 +114,39 @@ fn extract_single_zip(
 
         // Real extraction
         if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent)?;
+            match fs::create_dir_all(parent)
+                .with_context(|| format!("Cannot create directory: {}", parent.display()))
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    result.push(Err(e));
+                    continue;
+                }
+            }
         }
 
-        let mut out_file = fs::File::create(&out_path)?;
-        std::io::copy(&mut entry, &mut out_file)?;
+        let mut out_file = match fs::File::create(&out_path)
+            .with_context(|| format!("Cannot read ZIP entry {i} in file: {}", zip_path.display()))
+        {
+            Ok(v) => v,
+            Err(e) => {
+                result.push(Err(e));
+                continue;
+            }
+        };
+
+        match std::io::copy(&mut entry, &mut out_file)
+            .with_context(|| format!("Cannot copy ZIP entry {i} to file: {}", out_path.display()))
+        {
+            Ok(_) => result.push(Ok(())),
+            Err(e) => {
+                result.push(Err(e));
+                continue;
+            }
+        };
 
         tracing::debug!("✅ Extracted: {}", basename);
     }
 
-    Ok(())
+    result
 }

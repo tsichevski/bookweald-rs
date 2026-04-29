@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
-mod config;
+use bookweald_rs::config::BookwealdConfig;
 mod validate;
 
 #[derive(Parser, Debug)]
@@ -35,10 +35,17 @@ enum Commands {
 
     /// Extract FB2 books from ZIP files
     Extract {
-        #[arg(value_name = "ZIP", required = true)]
+        /// Input ZIP file(s)
+        #[arg(value_name = "ZIP", required = true, num_args(1..))]
         input: Vec<PathBuf>,
+
+        /// Explicitly set the output directory (overrides config.library_dir)
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Force existing files overwrite
+        #[arg(short, long)]
+        force: bool,
     },
 
     /// Validate FB2/XML files against XSD (streaming)
@@ -102,27 +109,30 @@ fn main() -> Result<()> {
     match &cli.command {
         Commands::Init { force } => {
             tracing::info!("Creating default configuration (force: {})", force);
-            config::BookwealdConfig::create_default(*force)?;
+            BookwealdConfig::create_default(*force)?;
         }
 
-        Commands::Extract { input, output } => {
+        Commands::Extract {
+            input,
+            output,
+            force,
+        } => {
             let config = bookweald_rs::config::BookwealdConfig::load()?;
 
-            let final_output = output.as_deref().unwrap_or(&config.target_dir);
+            let final_output = output.as_deref().unwrap_or(&config.library_dir);
 
             // CLI --jobs / -j overrides config, same for --dry-run
             let jobs = cli.jobs.unwrap_or(config.jobs);
             let effective_dry_run = cli.dry_run || config.dry_run;
 
-            tracing::info!(
-                "Extracting {} ZIP(s) using {} thread(s) (dry_run={})",
-                input.len(),
+            bookweald_rs::extract::extract_zip_multi(
+                input,
+                final_output,
                 jobs,
-                effective_dry_run
-            );
-
-            bookweald_rs::extract::extract_zip_multi(input, final_output, jobs, effective_dry_run)
-                .context("Failed to extract archive(s)")?;
+                effective_dry_run,
+                *force,
+            )
+            .context("Failed to extract archive(s)")?;
         }
 
         Commands::Validate { input, xsd } => {
