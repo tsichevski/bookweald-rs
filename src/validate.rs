@@ -4,23 +4,23 @@
 //! into a single string and emitted with **one** tracing call to minimise
 //! interleaving from concurrent debug! output.
 
+use crate::blacklist;
 use anyhow::{Context, Result};
 use libxml::error::StructuredError;
 use libxml::parser::Parser;
 use libxml::schemas::{SchemaParserContext, SchemaValidationContext};
 use rayon::prelude::*;
 use std::path::PathBuf;
-mod blacklist;
 
 /// Returns Err if blacklist file was specified, but the file read error occurred
 pub fn validate(
     inputs: &[PathBuf],
     explicit_xsd: Option<&str>,
     dry_run: bool,
-    blacklist: &Option<PathBuf>,
+    bl: &Option<PathBuf>,
     reverse: bool,
 ) -> Result<()> {
-    let blacklisted = blacklist::blacklisted(blacklist)?;
+    let blacklisted = blacklist::blacklisted(bl)?;
     let (_black, not_black): (Vec<_>, Vec<_>) =
         inputs.into_iter().partition(|p| blacklisted(p) ^ reverse);
 
