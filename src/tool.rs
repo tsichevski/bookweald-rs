@@ -19,6 +19,10 @@ struct Cli {
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     verbose: u8,
 
+    /// Config path location (overrides default ~/.config/bookweald/config.json)
+    #[arg(short, long, value_name = "PATH", global = true)]
+    config: Option<PathBuf>,
+
     /// Number of parallel jobs (overrides config.jobs)
     #[arg(short = 'j', long = "jobs", value_name = "N", global = true)]
     jobs: Option<usize>,
@@ -125,7 +129,7 @@ fn main() -> Result<()> {
     match &cli.command {
         Commands::Init { force } => {
             tracing::info!("Creating default configuration (force: {})", force);
-            BookwealdConfig::create_default(*force)?;
+            BookwealdConfig::create_default(cli.config, *force)?;
         }
 
         Commands::Extract {
@@ -133,7 +137,7 @@ fn main() -> Result<()> {
             output,
             force,
         } => {
-            let config = bookweald_rs::config::BookwealdConfig::load()?;
+            let config = bookweald_rs::config::BookwealdConfig::load(cli.config)?;
             let final_output = output.as_deref().unwrap_or(&config.library_dir);
             let jobs = cli.jobs.unwrap_or(config.jobs);
             let effective_dry_run = cli.dry_run || config.dry_run;
@@ -156,7 +160,7 @@ fn main() -> Result<()> {
         }
 
         Commands::Validate { input, xsd } => {
-            let config = bookweald_rs::config::BookwealdConfig::load()?;
+            let config = bookweald_rs::config::BookwealdConfig::load(cli.config)?;
             let jobs = cli.jobs.unwrap_or(config.jobs);
             let effective_dry_run = cli.dry_run || config.dry_run;
             let xsd_ref = xsd.as_deref().and_then(|p| p.to_str());

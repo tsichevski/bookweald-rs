@@ -150,20 +150,32 @@ impl Default for BookwealdConfig {
 // -------------
 
 impl BookwealdConfig {
-    pub fn load() -> anyhow::Result<Self> {
-        let local = Path::new("config.json");
-        if local.exists() {
-            return Self::load_from(local);
-        }
+    fn eff_location(location: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+        match location {
+            Some(l) => Ok(l),
+            None => {
+                let local = Path::new("config.json");
+                if local.exists() {
+                    return Ok(PathBuf::from(local));
+                }
 
-        if let Some(mut p) = dirs::config_dir() {
-            p.push("bookweald/config.json");
-            if p.exists() {
-                return Self::load_from(&p);
+                if let Some(mut p) = dirs::config_dir() {
+                    p.push("bookweald/config.json");
+                    if p.exists() {
+                        return Ok(p);
+                    }
+                }
+
+                anyhow::bail!(
+                    "No config.json found.\nRun `bookweald init` (or `bookweald init --force`)"
+                );
             }
         }
+    }
 
-        anyhow::bail!("No config.json found.\nRun `bookweald init` (or `bookweald init --force`)");
+    pub fn load(location: Option<PathBuf>) -> anyhow::Result<Self> {
+        let path = Self::eff_location(location)?;
+        Self::load_from(&path)
     }
 
     fn load_from(path: &Path) -> anyhow::Result<Self> {
@@ -192,14 +204,8 @@ impl BookwealdConfig {
     }
 
     /// Create default config.json
-    pub fn create_default(overwrite: bool) -> anyhow::Result<bool> {
-        let path = dirs::config_dir()
-            .map(|mut p| {
-                p.push("bookweald/config.json");
-                p
-            })
-            .unwrap_or_else(|| PathBuf::from("config.json"));
-
+    pub fn create_default(location: Option<PathBuf>, overwrite: bool) -> anyhow::Result<bool> {
+        let path = Self::eff_location(location)?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }

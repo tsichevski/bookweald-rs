@@ -1,4 +1,11 @@
+//! FB2 / XML validation module (streaming XSD + well-formedness check).
+//!
+//! Heavy validation runs in parallel, but each file's error report is built
+//! into a single string and emitted with **one** tracing call to minimise
+//! interleaving from concurrent debug! output.
+
 use anyhow::{Context, Result};
+use libxml::error::StructuredError;
 use libxml::parser::Parser;
 use libxml::schemas::{SchemaParserContext, SchemaValidationContext};
 use rayon::prelude::*;
@@ -13,19 +20,32 @@ pub fn validate(inputs: &[PathBuf], explicit_xsd: Option<&str>, dry_run: bool) {
                 .and_then(|s| s.to_str())
                 .ok_or_else(|| anyhow::anyhow!("Invalid filename: {}", path.display()))?;
 
-            //tracing::debug!("🔍 Validating: {}", filename);
-
-            // Parse document (this already checks well-formedness)
+            // Parse document (checks well-formedness)
             let parser = Parser::default();
-            let doc = parser
+            let doc = match parser
                 .parse_file(path.to_str().unwrap_or(""))
-                .context("Failed to parse XML document — not well-formed")?;
+                .context("Failed to parse XML document — not well-formed")
+            {
+                Ok(doc) => doc,
+                Err(e) => {
+                    tracing::error!("❌ {}: {}", filename, e);
+                    return Err(e);
+                }
+            };
 
             if let Some(xsd) = explicit_xsd {
-                // Full XSD validation
                 let mut schema_ctx = SchemaParserContext::from_file(xsd);
-                let mut validation_ctx = SchemaValidationContext::from_parser(&mut schema_ctx)
-                    .map_err(|e| anyhow::anyhow!("Failed to create validation context: {:?}", e))?;
+                let mut validation_ctx = match SchemaValidationContext::from_parser(&mut schema_ctx)
+                {
+                    Ok(ctx) => ctx,
+                    Err(errors) => {
+                        tracing::error!(
+                            "{}",
+                            build_schema_validation_error_report(&filename, errors)
+                        );
+                        anyhow::bail!("XSD validation failed for {}", filename);
+                    }
+                };
 
                 match validation_ctx.validate_document(&doc) {
                     Ok(()) => {
@@ -33,29 +53,16 @@ pub fn validate(inputs: &[PathBuf], explicit_xsd: Option<&str>, dry_run: bool) {
                         Ok(())
                     }
                     Err(errors) => {
-                        tracing::debug!(
-                            "❌ {} failed XSD validation ({} errors):",
-                            filename,
-                            errors.len()
+                        tracing::error!(
+                            "{}",
+                            build_schema_validation_error_report(&filename, errors)
                         );
-                        for err in errors.iter().take(15) {
-                            let line = err.line.map(|l| l.to_string());
-                            let msg = err
-                                .message
-                                .clone()
-                                .unwrap_or_else(|| "Unknown error".to_string());
-                            tracing::debug!(
-                                "   [ERROR] line {}: {}",
-                                line.as_deref().unwrap_or("?"),
-                                msg
-                            );
-                        }
                         anyhow::bail!("XSD validation failed for {}", filename);
                     }
                 }
             } else {
-                // XML Conformance only
-                tracing::debug!("✅ {} is well-formed and conforms to XML rules", filename);
+                // Only well-formedness
+                tracing::debug!("✅ {} is well-formed", filename);
                 Ok(())
             }
         })
@@ -65,14 +72,36 @@ pub fn validate(inputs: &[PathBuf], explicit_xsd: Option<&str>, dry_run: bool) {
     let num_errors = errors.len();
 
     tracing::info!(
-        "Extraction completed: {} FB2 files found in {} inputs ({} succeeded, {} failed)",
-        num_success + num_errors,
+        "Validation completed: {} file(s) processed ({} OK, {} failed)",
         inputs.len(),
         num_success,
         num_errors
     );
 
     if dry_run {
-        tracing::info!("[dry-run] No files or directories were changed");
+        tracing::info!("[dry-run] No files were modified");
     }
+}
+
+fn build_schema_validation_error_report(filename: &str, errors: Vec<StructuredError>) -> String {
+    // === Build full report as ONE string and emit atomically ===
+    let mut report = format!(
+        "❌ {} failed XSD validation ({} errors):\n",
+        filename,
+        errors.len()
+    );
+
+    for err in errors.iter().take(15) {
+        let line = err.line.map_or_else(|| "?".to_string(), |l| l.to_string());
+        let msg = err
+            .message
+            .clone()
+            .unwrap_or_else(|| "Unknown error".to_string());
+        report.push_str(&format!("   [ERROR] line {}: {}\n", line, msg));
+    }
+
+    if errors.len() > 15 {
+        report.push_str(&format!("   ... and {} more errors\n", errors.len() - 15));
+    }
+    report
 }
