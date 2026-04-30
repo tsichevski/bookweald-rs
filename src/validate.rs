@@ -11,7 +11,13 @@ use libxml::schemas::{SchemaParserContext, SchemaValidationContext};
 use rayon::prelude::*;
 use std::path::PathBuf;
 
-pub fn validate(inputs: &[PathBuf], explicit_xsd: Option<&str>, dry_run: bool) {
+pub fn validate(
+    inputs: &[PathBuf],
+    explicit_xsd: Option<&str>,
+    dry_run: bool,
+    blacklist: &Option<PathBuf>,
+    reverse: bool,
+) {
     let (successes, errors): (Vec<_>, Vec<_>) = inputs
         .par_iter()
         .map(|path| {

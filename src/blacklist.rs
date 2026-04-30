@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// [append file path comment] appends a line [basename(path)|comment] to the blacklist [file].
 /// Creates parent directories if needed. Follows blacklist.rst format.
@@ -50,4 +50,33 @@ pub fn load(file: &Path) -> Result<HashMap<String, String>> {
     } else {
         anyhow::bail!("File does not exist: {}", file.display())
     }
+}
+
+/// [blacklisted blacklist_file] Returns predicate testing if the argument is listed in the text
+///    file at [blacklist_file] path
+fn blacklisted(blacklist_file: &Option<PathBuf>) -> Result<impl Fn(&Path) -> bool> {
+    let table: Option<HashMap<String, String>> = (match blacklist_file {
+        None => {
+            tracing::info!("No black list file will be used");
+            Ok::<Option<HashMap<String, String>>, anyhow::Error>(None)
+        }
+        Some(path) => {
+            let table = load(path)?;
+            let length = table.len();
+            if length > 0 {
+                tracing::info!("Blacklist table has {length} unique filenames");
+                Ok(Some(table))
+            } else {
+                Ok(None)
+            }
+        }
+    })?;
+
+    Ok(|path: &Path| match &table {
+        None => false,
+        Some(table) => match path.file_name() {
+            None => false,
+            Some(basename) => table.contains_key(&basename.to_string_lossy().to_string()),
+        },
+    })
 }

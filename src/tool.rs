@@ -64,6 +64,10 @@ enum Commands {
         /// Optional XSD schema, if missing, only base XML structure conformance will be validate
         #[arg(short, long, value_name = "XSD")]
         xsd: Option<PathBuf>,
+
+        /// Reverse black list: process blacklisted files only.
+        #[arg(short, long)]
+        reverse: bool,
     },
 
     Group {/* TODO */},
@@ -159,7 +163,11 @@ fn main() -> Result<()> {
             })
         }
 
-        Commands::Validate { input, xsd } => {
+        Commands::Validate {
+            input,
+            xsd,
+            reverse,
+        } => {
             let config = bookweald_rs::config::BookwealdConfig::load(cli.config)?;
             let jobs = cli.jobs.unwrap_or(config.jobs);
             let effective_dry_run = cli.dry_run || config.dry_run;
@@ -176,7 +184,13 @@ fn main() -> Result<()> {
                 files.extend(collect_fb2_files(path)?);
             }
             run_parallel(jobs, || {
-                validate::validate(&files, xsd_ref, effective_dry_run)
+                validate::validate(
+                    &files,
+                    xsd_ref,
+                    effective_dry_run,
+                    &config.blacklist,
+                    *reverse,
+                )
             });
         }
         _ => println!("Command not implemented yet"),
