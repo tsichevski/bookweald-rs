@@ -10,15 +10,21 @@ use libxml::parser::Parser;
 use libxml::schemas::{SchemaParserContext, SchemaValidationContext};
 use rayon::prelude::*;
 use std::path::PathBuf;
+mod blacklist;
 
+/// Returns Err if blacklist file was specified, but the file read error occurred
 pub fn validate(
     inputs: &[PathBuf],
     explicit_xsd: Option<&str>,
     dry_run: bool,
     blacklist: &Option<PathBuf>,
     reverse: bool,
-) {
-    let (successes, errors): (Vec<_>, Vec<_>) = inputs
+) -> Result<()> {
+    let blacklisted = blacklist::blacklisted(blacklist)?;
+    let (_black, not_black): (Vec<_>, Vec<_>) =
+        inputs.into_iter().partition(|p| blacklisted(p) ^ reverse);
+
+    let (successes, errors): (Vec<_>, Vec<_>) = not_black
         .par_iter()
         .map(|path| {
             let filename = path
@@ -87,6 +93,8 @@ pub fn validate(
     if dry_run {
         tracing::info!("[dry-run] No files were modified");
     }
+
+    Ok(())
 }
 
 fn build_schema_validation_error_report(filename: &str, errors: Vec<StructuredError>) -> String {

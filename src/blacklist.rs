@@ -4,6 +4,7 @@ use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// [append file path comment] appends a line [basename(path)|comment] to the blacklist [file].
 /// Creates parent directories if needed. Follows blacklist.rst format.
@@ -54,7 +55,7 @@ pub fn load(file: &Path) -> Result<HashMap<String, String>> {
 
 /// [blacklisted blacklist_file] Returns predicate testing if the argument is listed in the text
 ///    file at [blacklist_file] path
-fn blacklisted(blacklist_file: &Option<PathBuf>) -> Result<impl Fn(&Path) -> bool> {
+pub fn blacklisted(blacklist_file: &Option<PathBuf>) -> anyhow::Result<impl Fn(&Path) -> bool> {
     let table: Option<HashMap<String, String>> = (match blacklist_file {
         None => {
             tracing::info!("No black list file will be used");
@@ -72,7 +73,10 @@ fn blacklisted(blacklist_file: &Option<PathBuf>) -> Result<impl Fn(&Path) -> boo
         }
     })?;
 
-    Ok(|path: &Path| match &table {
+    // Move the table into an Arc so the returned closure can own it
+    let table = Arc::new(table); // Option<Arc<HashMap<...>>>
+
+    Ok(move |path: &Path| match &*table {
         None => false,
         Some(table) => match path.file_name() {
             None => false,
