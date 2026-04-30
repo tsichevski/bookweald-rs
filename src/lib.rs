@@ -1,4 +1,5 @@
 pub mod alias;
+pub mod blacklist;
 pub mod book;
 pub mod config;
 pub mod extract;
