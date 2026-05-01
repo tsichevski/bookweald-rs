@@ -1,6 +1,9 @@
 use anyhow::Result;
 use bookweald_rs::blacklist;
 use clap::{Parser, Subcommand};
+use std::fs;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::{
     path::{Path, PathBuf},
     usize,
@@ -181,16 +184,32 @@ fn main() -> Result<()> {
                 files.extend(collect_fb2_files(path)?);
             }
             let total = files.len();
-            let blacklisted = blacklist::blacklisted(&config.blacklist)?;
+            let blacklist = &config.blacklist;
+            let blacklisted = blacklist::blacklisted(blacklist)?;
             let (black, not_black): (Vec<_>, Vec<_>) =
                 files.into_iter().partition(|p| blacklisted(p) ^ *reverse);
-            run_parallel(jobs, || {
+            return run_parallel(jobs, || {
                 let results: Vec<_> = validate::validate(&not_black, xsd_ref);
 
-                for (file, result) in not_black.iter().zip(&results) {
-                    if let Err(e) = result {
-                        let basename = file.file_prefix().unwrap_or_default().to_string_lossy();
-                        println!("{}|{}", basename, e);
+                if let Some(file) = blacklist {
+                    if let Some(parent) = file.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    let mut ch: File = OpenOptions::new()
+                        .append(true)
+                        .create(true)
+                        .open(file)
+                        .unwrap();
+
+                    for (file, result) in not_black.iter().zip(&results) {
+                        if let Err(e) = result {
+                            let basename = file
+                                .file_prefix()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string();
+                            writeln!(ch, "{}|{}", basename, e)?;
+                        }
                     }
                 }
 
@@ -209,6 +228,7 @@ fn main() -> Result<()> {
                 if effective_dry_run {
                     tracing::info!("[dry-run] Blacklist was not modified");
                 }
+                Ok(())
             });
         }
         _ => println!("Command not implemented yet"),
