@@ -1,0 +1,40 @@
+title = "Bookweald-rs logging configuration"
+
+# Root = most verbose level you want anywhere (file)
+[filter.root]
+level = "debug"
+
+# Restrictive filter for console
+[filter.info_only]
+level = "info"
+
+# ── File layer (full verbosity) ──
+[layer.file]
+type = "fmt"
+writer = "bookweald-log"
+formatter = "json"
+span_events = "none"
+ansi = false
+level = true
+
+[writer.bookweald-log]
+type = "file"
+directory_path = "logs"
+file_name = "bookweald"
+file_ext = "log"
+rotation = "daily"
+max_log_files = 30
+non_blocking = true
+
+# ── Console layer (restricted to info+) ──
+[layer.console]
+type = "fmt"
+writer = "stdout"
+formatter = "compact"
+span_events = "active"
+ansi = true
+level = true
+filter = "info_only"
+
+[writer.stdout]
+type = "standard_output"

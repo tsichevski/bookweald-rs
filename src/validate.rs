@@ -11,9 +11,8 @@ use libxml::schemas::{SchemaParserContext, SchemaValidationContext};
 use rayon::prelude::*;
 use std::path::PathBuf;
 
-/// Returns Err if blacklist file was specified, but the file read error occurred
-pub fn validate(inputs: &[PathBuf], explicit_xsd: Option<&str>, dry_run: bool) -> Result<()> {
-    let (successes, errors): (Vec<_>, Vec<_>) = inputs
+pub fn validate(inputs: &[PathBuf], explicit_xsd: Option<&str>) -> Vec<Result<()>> {
+    inputs
         .par_iter()
         .map(|path| {
             let filename = path
@@ -29,7 +28,7 @@ pub fn validate(inputs: &[PathBuf], explicit_xsd: Option<&str>, dry_run: bool) -
             {
                 Ok(doc) => doc,
                 Err(e) => {
-                    tracing::error!("❌ {}: {}", filename, e);
+                    tracing::debug!("❌ {}: {}", filename, e);
                     return Err(e);
                 }
             };
@@ -40,7 +39,7 @@ pub fn validate(inputs: &[PathBuf], explicit_xsd: Option<&str>, dry_run: bool) -
                 {
                     Ok(ctx) => ctx,
                     Err(errors) => {
-                        tracing::error!(
+                        tracing::debug!(
                             "{}",
                             build_schema_validation_error_report(&filename, errors)
                         );
@@ -54,7 +53,7 @@ pub fn validate(inputs: &[PathBuf], explicit_xsd: Option<&str>, dry_run: bool) -
                         Ok(())
                     }
                     Err(errors) => {
-                        tracing::error!(
+                        tracing::debug!(
                             "{}",
                             build_schema_validation_error_report(&filename, errors)
                         );
@@ -67,23 +66,7 @@ pub fn validate(inputs: &[PathBuf], explicit_xsd: Option<&str>, dry_run: bool) -
                 Ok(())
             }
         })
-        .partition(Result::is_ok);
-
-    let num_success = successes.len();
-    let num_errors = errors.len();
-
-    tracing::info!(
-        "Validation completed: {} file(s) processed ({} OK, {} failed)",
-        inputs.len(),
-        num_success,
-        num_errors
-    );
-
-    if dry_run {
-        tracing::info!("[dry-run] No files were modified");
-    }
-
-    Ok(())
+        .collect()
 }
 
 fn build_schema_validation_error_report(filename: &str, errors: Vec<StructuredError>) -> String {

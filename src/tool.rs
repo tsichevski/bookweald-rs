@@ -124,12 +124,7 @@ where
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let level = match cli.verbose {
-        0 => tracing::Level::INFO,
-        1 => tracing::Level::DEBUG,
-        _ => tracing::Level::TRACE,
-    };
-    tracing_subscriber::fmt().with_max_level(level).init();
+    tracing_config::init!();
 
     match &cli.command {
         Commands::Init { force } => {
@@ -180,16 +175,40 @@ fn main() -> Result<()> {
                 jobs,
                 effective_dry_run,
             );
+
             let mut files: Vec<PathBuf> = Vec::new();
             for path in input {
                 files.extend(collect_fb2_files(path)?);
             }
+            let total = files.len();
             let blacklisted = blacklist::blacklisted(&config.blacklist)?;
-            let (_black, not_black): (Vec<_>, Vec<_>) =
+            let (black, not_black): (Vec<_>, Vec<_>) =
                 files.into_iter().partition(|p| blacklisted(p) ^ *reverse);
             run_parallel(jobs, || {
-                // For now ignore the validate global errors, are they traced properly?
-                let _ = validate::validate(&not_black, xsd_ref, effective_dry_run);
+                let results: Vec<_> = validate::validate(&not_black, xsd_ref);
+
+                for (file, result) in not_black.iter().zip(&results) {
+                    if let Err(e) = result {
+                        let basename = file.file_prefix().unwrap_or_default().to_string_lossy();
+                        println!("{}|{}", basename, e);
+                    }
+                }
+
+                let (successes, errors): (Vec<_>, Vec<_>) =
+                    results.into_iter().partition(Result::is_ok);
+
+                tracing::info!(
+                    "Validation completed books found {}, blacklisted: {}, processed {} ({} OK, {} failed)",
+                    total,
+                    black.len(),
+                    not_black.len(),
+                    successes.len(),
+                    errors.len()
+                );
+
+                if effective_dry_run {
+                    tracing::info!("[dry-run] Blacklist was not modified");
+                }
             });
         }
         _ => println!("Command not implemented yet"),
