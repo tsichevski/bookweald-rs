@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use libxml::error::StructuredError;
-use libxml::parser::Parser;
+use libxml::parser::{Parser, ParserOptions};
 use libxml::schemas::{SchemaParserContext, SchemaValidationContext};
 use rayon::prelude::*;
 use std::path::PathBuf;
@@ -22,8 +22,14 @@ pub fn validate(inputs: &[PathBuf], explicit_xsd: Option<&str>) -> Vec<Result<()
 
             // Parse document (checks well-formedness)
             let parser = Parser::default();
+            let parse_options = ParserOptions {
+                // With recover=true the parser will accept everything :-(
+                recover: false,
+                ..ParserOptions::default()
+            };
+
             let doc = match parser
-                .parse_file(path.to_str().unwrap_or(""))
+                .parse_file_with_options(path.to_str().unwrap_or(""), parse_options)
                 .context("Failed to parse XML document — not well-formed")
             {
                 Ok(doc) => doc,
