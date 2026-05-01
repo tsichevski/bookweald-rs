@@ -23,10 +23,8 @@ pub fn append(file: &Path, path: &Path, comment: &str) -> Result<()> {
 }
 
 pub fn load(file: &Path) -> Result<HashMap<String, String>> {
-    //   if Sys.file_exists path then
+    let mut table: HashMap<String, String> = HashMap::with_capacity(512);
     if file.exists() {
-        let mut table: HashMap<String, String> = HashMap::with_capacity(512);
-
         let input_file = File::open(file)?;
         let mut reader = BufReader::new(input_file);
 
@@ -47,10 +45,13 @@ pub fn load(file: &Path) -> Result<HashMap<String, String>> {
 
             line.clear(); // reuse buffer
         }
-        Ok(table)
     } else {
-        anyhow::bail!("File does not exist: {}", file.display())
+        tracing::info!(
+            "Blacklist file does not exist and will be crerated on demand: {}",
+            file.display(),
+        )
     }
+    Ok(table)
 }
 
 /// [blacklisted blacklist_file] Returns predicate testing if the argument is listed in the text

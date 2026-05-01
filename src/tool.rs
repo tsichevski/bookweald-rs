@@ -188,6 +188,9 @@ fn main() -> Result<()> {
             let blacklisted = blacklist::blacklisted(blacklist)?;
             let (black, not_black): (Vec<_>, Vec<_>) =
                 files.into_iter().partition(|p| blacklisted(p) ^ *reverse);
+            if !black.is_empty() {
+                tracing::info!("{} files, {} blacklisted", total, black.len());
+            }
             return run_parallel(jobs, || {
                 let results: Vec<_> = validate::validate(&not_black, xsd_ref);
 
@@ -217,9 +220,7 @@ fn main() -> Result<()> {
                     results.into_iter().partition(Result::is_ok);
 
                 tracing::info!(
-                    "Validation completed books found {}, blacklisted: {}, processed {} ({} OK, {} failed)",
-                    total,
-                    black.len(),
+                    "Validation completed: books processed: {} ({} OK, {} failed)",
                     not_black.len(),
                     successes.len(),
                     errors.len()
