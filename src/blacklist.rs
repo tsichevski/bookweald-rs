@@ -17,7 +17,7 @@ pub fn append(file: &Path, path: &Path, comment: &str) -> Result<()> {
     }
     let mut ch: File = OpenOptions::new().append(true).create(true).open(file)?;
 
-    let basename = path.file_name().with_context(|| "Invalid path {path}")?;
+    let basename = path.file_prefix().with_context(|| "Invalid path {path}")?;
     writeln!(ch, "{:?}|{comment}", basename)?;
     Ok(())
 }
@@ -78,7 +78,7 @@ pub fn blacklisted(blacklist_file: &Option<PathBuf>) -> anyhow::Result<impl Fn(&
 
     Ok(move |path: &Path| match &*table {
         None => false,
-        Some(table) => match path.file_name() {
+        Some(table) => match path.file_prefix() {
             None => false,
             Some(basename) => table.contains_key(&basename.to_string_lossy().to_string()),
         },

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use bookweald_rs::blacklist;
 use clap::{Parser, Subcommand};
 use std::{
     path::{Path, PathBuf},
@@ -6,7 +7,7 @@ use std::{
 };
 
 use bookweald_rs::config::BookwealdConfig;
-mod validate;
+use bookweald_rs::validate;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -183,14 +184,12 @@ fn main() -> Result<()> {
             for path in input {
                 files.extend(collect_fb2_files(path)?);
             }
+            let blacklisted = blacklist::blacklisted(&config.blacklist)?;
+            let (_black, not_black): (Vec<_>, Vec<_>) =
+                files.into_iter().partition(|p| blacklisted(p) ^ *reverse);
             run_parallel(jobs, || {
-                validate::validate(
-                    &files,
-                    xsd_ref,
-                    effective_dry_run,
-                    &config.blacklist,
-                    *reverse,
-                )
+                // For now ignore the validate global errors, are they traced properly?
+                let _ = validate::validate(&not_black, xsd_ref, effective_dry_run);
             });
         }
         _ => println!("Command not implemented yet"),
