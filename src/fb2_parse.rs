@@ -1,9 +1,9 @@
 use crate::book::Book;
 use crate::normalize::normalize_chunk;
 use crate::person::{Person, normalize, person_create_exn};
+use ahash::HashMap;
 use quick_xml::Reader;
 use quick_xml::events::Event;
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Cursor, Read};
 use std::path::Path;
@@ -31,7 +31,7 @@ pub fn parse_book_info(
             let mut archive = zip::ZipArchive::new(zip_file)?;
             let mut fb2_entry = archive.by_index(0)?; // first .fb2 inside ZIP
 
-            // Read entire entry into memory (FB2 files are small → safe & simple)
+            // Read entire entry into memory
             let mut content = Vec::new();
             fb2_entry.read_to_end(&mut content)?;
             Reader::from_reader(Box::new(Cursor::new(content)))

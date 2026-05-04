@@ -1,5 +1,6 @@
 use anyhow::Result;
 use bookweald_rs::blacklist;
+use bookweald_rs::db;
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::fs::{File, OpenOptions};
@@ -15,25 +16,68 @@ use bookweald_rs::validate;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 #[command(propagate_version = true)]
-struct Cli {
+struct Args {
     #[command(subcommand)]
     command: Commands,
 
     /// Verbose output (-v, -vv, -vvv)
-    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+    #[arg(long, action = clap::ArgAction::Count, global = true)]
     verbose: u8,
 
     /// Config path location (overrides default ~/.config/bookweald/config.json)
     #[arg(short, long, value_name = "PATH", global = true)]
     config: Option<PathBuf>,
 
-    /// Number of parallel jobs (overrides config.jobs)
-    #[arg(short = 'j', long = "jobs", value_name = "N", global = true)]
+    /// Maximum number of CPU threads Bookweald may use for heavy computation
+    ///
+    /// Lower this value if you want the machine to stay responsive while building large libraries.
+    #[arg(short = 'j', long = "jobs", value_name = "JOBS", global = true)]
     jobs: Option<usize>,
 
-    /// Do not actually write any files or directories (global)
-    #[arg(long, short = 'n', global = true)]
+    /// Number of async I/O threads
+    #[arg(short, long, value_name = "N", global = true)]
+    pub io_threads: Option<usize>,
+
+    /// Maximum threads for blocking/offload operations (spawn_blocking pool)
+    ///
+    /// Rarely needs tuning. Controls background file I/O and short CPU bursts.
+    /// Default: same as jobs.
+    #[arg(short, long, value_name = "N", global = true)]
+    pub blocking_threads: Option<usize>,
+
+    /// Do not actually do any changes
+    #[arg(short, long, short = 'n', global = true)]
     dry_run: bool,
+}
+
+fn build_runtime(args: &Args) -> tokio::runtime::Runtime {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8);
+
+    let jobs = args.jobs.unwrap_or((cores * 3) / 4); // ~75% for CPU
+    let io = args.io_threads.unwrap_or((cores / 2).max(4));
+    let blocking = args.blocking_threads.unwrap_or(jobs.max(8));
+
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(io)
+        .max_blocking_threads(blocking)
+        .enable_all()
+        .build()
+        .expect("Failed to create Tokio runtime")
+}
+
+fn init_rayon(args: &Args) {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8);
+    let jobs = args.jobs.unwrap_or(cores);
+
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .thread_name(|i| format!("bookweald-{}", i))
+        .build_global()
+        .expect("Failed to initialize Rayon global pool");
 }
 
 #[derive(Subcommand, Debug)]
@@ -74,7 +118,17 @@ enum Commands {
         reverse: bool,
     },
 
+    /// Drop DB contents and initialize DB schema
+    SchemaInit {
+        /// Overwrite existing schema
+        #[arg(short, long)]
+        overwrite: bool,
+    },
+
+    /// TODO Group books by author (create author sub-directories)
     Group {/* TODO */},
+
+    /// TODO Parse all FB2 files in the specified directory and add them to index
     Index {/* TODO */},
 }
 
@@ -125,14 +179,17 @@ where
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let args = Args::parse();
 
     tracing_config::init!();
 
-    match &cli.command {
+    let runtime = build_runtime(&args); // we already have the runtime from #[tokio::main], but you can also use rt.block_on(...)
+    init_rayon(&args);
+
+    match &args.command {
         Commands::Init { force } => {
             tracing::info!("Creating default configuration (force: {})", force);
-            BookwealdConfig::create_default(cli.config, *force)?;
+            BookwealdConfig::create_default(args.config, *force)?;
         }
 
         Commands::Extract {
@@ -140,10 +197,10 @@ fn main() -> Result<()> {
             output,
             force,
         } => {
-            let config = bookweald_rs::config::BookwealdConfig::load(cli.config)?;
+            let config = bookweald_rs::config::BookwealdConfig::load(args.config)?;
             let final_output = output.as_deref().unwrap_or(&config.library_dir);
-            let jobs = cli.jobs.unwrap_or(config.jobs);
-            let effective_dry_run = cli.dry_run || config.dry_run;
+            let jobs = args.jobs.unwrap_or(config.jobs);
+            let effective_dry_run = args.dry_run || config.dry_run;
 
             tracing::info!(
                 "Extracting {} ZIP(s) using {} thread(s) (dry_run={}, force={})",
@@ -152,7 +209,8 @@ fn main() -> Result<()> {
                 effective_dry_run,
                 force
             );
-            run_parallel(jobs, || {
+
+            runtime.block_on(async {
                 bookweald_rs::extract::extract_zip_multi(
                     input,
                     final_output,
@@ -167,9 +225,9 @@ fn main() -> Result<()> {
             xsd,
             reverse,
         } => {
-            let config = bookweald_rs::config::BookwealdConfig::load(cli.config)?;
-            let jobs = cli.jobs.unwrap_or(config.jobs);
-            let effective_dry_run = cli.dry_run || config.dry_run;
+            let config = bookweald_rs::config::BookwealdConfig::load(args.config)?;
+            let jobs = args.jobs.unwrap_or(config.jobs);
+            let effective_dry_run = args.dry_run || config.dry_run;
             let xsd_ref = xsd.as_deref().and_then(|p| p.to_str());
 
             tracing::info!(
@@ -231,6 +289,30 @@ fn main() -> Result<()> {
                 }
                 Ok(())
             });
+        }
+
+        Commands::SchemaInit { overwrite } => {
+            let config = bookweald_rs::config::BookwealdConfig::load(args.config)?;
+            let dry_run = args.dry_run || config.dry_run;
+            let cd = config.database;
+            tracing::info!("Initialize DB schema");
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let admin_pool =
+                        db::connect_async(&cd.host, cd.port, &cd.admin, &cd.admin_passwd, &cd.name)
+                            .await
+                            .expect("Failed to connect as admin");
+                    if !dry_run {
+                        // if overwrite then
+                        //   Db.drop_schema admconn;
+                        db::init_schema(&admin_pool, *overwrite)
+                            .await
+                            .expect("Failed to replace schema");
+                    }
+                })
         }
         _ => println!("Command not implemented yet"),
     }

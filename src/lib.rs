@@ -2,6 +2,7 @@ pub mod alias;
 pub mod blacklist;
 pub mod book;
 pub mod config;
+pub mod db;
 pub mod extract;
 pub mod fb2_parse;
 pub mod normalize;

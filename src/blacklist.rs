@@ -1,5 +1,5 @@
+use ahash::{HashMap, HashMapExt};
 use anyhow::{Context, Result};
-use std::collections::HashMap;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
