@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use std::fs::File;
@@ -6,7 +6,6 @@ use std::io::{BufRead, BufReader, Cursor, Read};
 use std::path::Path;
 
 use crate::book::Book;
-use crate::normalize::normalize_chunk;
 use crate::person::{Person, normalize, person_create_exn};
 use ahash::HashMap;
 
@@ -200,9 +199,10 @@ pub fn parse_book_info(path: &Path, aliases: &Option<HashMap<String, Person>>) -
 
     let title = title.ok_or_else(|| anyhow::anyhow!("No <book-title> found in FB2 file"))?;
 
-    // Check title is not empty after normalization
-    normalize_chunk(&title)
-        .with_context(|| format!("Book title normalizes to empty: '{}'", &title))?;
+    // Check title is not empty after all non-alphanumeric characters removed
+    if !&title.chars().any(char::is_alphanumeric) {
+        bail!("Book title normalizes to empty: '{}'", &title);
+    }
 
     append_current_author_unique(
         &mut current_last_name,

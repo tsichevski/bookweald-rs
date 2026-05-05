@@ -1,4 +1,3 @@
-use crate::normalize::normalize_chunk;
 use crate::person::Person;
 use md5;
 
@@ -31,6 +30,10 @@ pub struct Book {
     pub encoding: String,
 }
 
+fn normalize_title(title: &str) -> String {
+    title.chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
 /// Computes a MD5 digest for a book.
 ///
 /// `ext_id` and `version` default to empty string if `None`
@@ -44,10 +47,10 @@ pub fn book_digest(
         authors,
         ..
     }: &Book,
-) -> String {
+) -> [u8; 16] {
     let ext_id = ext_id.as_deref().unwrap_or("");
     let version = version.as_deref().unwrap_or("");
-    let norm_title = normalize_chunk(title).unwrap();
+    let norm_title = normalize_title(title);
 
     // Concat: norm_title, ext_id, version, author1, author2, ...
     let mut s = String::new();
@@ -57,5 +60,5 @@ pub fn book_digest(
     for a in authors {
         s.push_str(&a.id);
     }
-    hex::encode(md5::compute(s).0)
+    md5::compute(s).0
 }

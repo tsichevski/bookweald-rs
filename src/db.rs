@@ -1,18 +1,15 @@
-// src/db.rs
-//use sqlx::{Executor, PgPool, Row};
-use sqlx::PgPool;
-use std::sync::OnceLock;
-//use tracing::{error, info};
 use anyhow::{Context, Result};
+use futures_util::TryStreamExt;
+use sqlx::PgPool;
+use sqlx::Row;
+use std::collections::HashSet;
+use std::sync::OnceLock;
 use tracing::*;
 
-// Reuse your existing types (add these derives in book.rs / person.rs if not present)
-// use crate::book::Book; // assume pub struct Book { pub digest: String, pub title: String, ... }
-// use crate::person::Person; // assume pub struct Person { pub normalized_name: String, ... }
+pub type DbPool = sqlx::PgPool;
 
 static DB_POOL: OnceLock<PgPool> = OnceLock::new(); // Application-managed R/W pool
 
-// In src/db.rs — replace connect with this async version
 pub async fn connect_async(
     host: &str,
     port: u16,
@@ -116,6 +113,26 @@ CREATE TABLE books (
         .await?;
 
     tx.commit().await
+}
+
+/// Load all existing canonical MD5 digests from the books table.
+/// Used for fast incremental indexing.
+pub async fn load_existing_md5s(pool: &DbPool) -> Result<HashSet<[u8; 16]>> {
+    let mut md5s = HashSet::with_capacity(500_000); // pre-allocate for 1M scale
+
+    let mut rows = sqlx::query("SELECT md5_hash FROM books").fetch(pool);
+
+    while let Some(row) = rows.try_next().await? {
+        let md5_bytes: Vec<u8> = row.try_get("md5")?;
+        if md5_bytes.len() == 16 {
+            let mut arr = [0u8; 16];
+            arr.copy_from_slice(&md5_bytes);
+            md5s.insert(arr);
+        }
+    }
+
+    info!("Loaded {} existing MD5 fingerprints from DB", md5s.len());
+    Ok(md5s)
 }
 
 // /// Find or insert person (UPSERT, like OCaml)
