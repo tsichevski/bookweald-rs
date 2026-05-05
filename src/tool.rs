@@ -352,9 +352,10 @@ fn main() -> Result<()> {
             runtime.block_on(async {
                 let pool =
                     db::connect_async(&cd.host, cd.port, &cd.user, &cd.passwd, &cd.name).await?;
-                index::index(&not_black, &aliases, *overwrite, &pool).await?;
+                let total = &not_black.len();
+                index::index(not_black, &aliases, *overwrite, &pool).await?;
 
-                tracing::info!("Indexing completed: books processed: {}", not_black.len(),);
+                tracing::info!("Indexing completed: books processed: {}", total);
 
                 if effective_dry_run {
                     tracing::info!("[dry-run] Db was not modified");

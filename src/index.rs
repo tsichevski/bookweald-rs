@@ -7,45 +7,49 @@ use sqlx::PgPool;
 use std::path::PathBuf;
 
 pub async fn index(
-    inputs: &[PathBuf],
+    inputs: Vec<PathBuf>,
     aliases: &Option<HashMap<String, Person>>,
     overwrite: bool,
     pool: &PgPool,
 ) -> Result<()> {
     let existing_md5s: std::collections::HashSet<[u8; 16]> = db::load_existing_md5s(pool).await?;
 
-    let (tx, rx) = cb::bounded(8000);
+    let (tx, rx) = cb::bounded::<(book::Book, [u8; 16])>(8192);
+    let aliases_clone = aliases.clone();
 
-    // Parallel producer (blocking section)
-    std::thread::scope(|s| {
-        let tx_clone = tx.clone();
-        s.spawn(move || {
-            inputs.par_iter().for_each(|path| {
-                let book: book::Book = match fb2_parse::parse_book_info(path, aliases) {
-                    Ok(book) => book,
-                    Err(e) => {
-                        tracing::warn!(?path, "parse failed: {}", e);
-                        return;
-                    }
-                };
+    // Producer
+    let tx_clone = tx.clone();
 
-                let md5 = book::book_digest(&book);
-
-                if !overwrite && existing_md5s.contains(&md5) {
+    let parse_handle = tokio::task::spawn_blocking(move || {
+        // let tx_clone = tx.clone();
+        inputs.par_iter().for_each(|path| {
+            let book: book::Book = match fb2_parse::parse_book_info(path, &aliases_clone) {
+                Ok(book) => book,
+                Err(e) => {
+                    tracing::warn!(?path, "parse failed: {}", e);
                     return;
                 }
+            };
 
-                let _ = tx_clone.send((book, md5));
-            });
+            let md5 = book::book_digest(&book);
+
+            if !overwrite && existing_md5s.contains(&md5) {
+                return;
+            }
+
+            if let Err(e) = tx_clone.send((book, md5)) {
+                tracing::error!("channel send failed: {}", e);
+            }
         });
     });
     drop(tx);
 
     // Consumer: batched DB inserts (async)
-
     for (book, _md5) in rx {
         tracing::debug!("Received {}", book.title);
     }
+    // Wait for parsing to finish
+    parse_handle.await?;
 
     Ok(())
 }
