@@ -347,8 +347,12 @@ fn main() -> Result<()> {
                 Some(path) => Some(alias::load_aliases(&path)?),
             };
 
+            let cd = config.database;
+
             runtime.block_on(async {
-                index::index(&not_black, &aliases, *overwrite)?;
+                let pool =
+                    db::connect_async(&cd.host, cd.port, &cd.user, &cd.passwd, &cd.name).await?;
+                index::index(&not_black, &aliases, *overwrite, &pool).await?;
 
                 tracing::info!("Indexing completed: books processed: {}", not_black.len(),);
 

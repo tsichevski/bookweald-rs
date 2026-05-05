@@ -27,7 +27,7 @@ pub async fn connect_async(
     let pool = PgPool::connect(&url)
         .await
         .context("Failed to connect (R/W user)")?;
-    info!("R/W pool created (books user)");
+    info!("DB pool created");
     Ok(pool)
 }
 
@@ -55,17 +55,27 @@ pub async fn init_schema(admin_pool: &PgPool, overwrite: bool) -> Result<(), sql
 
     sqlx::query(
         r#"
-            CREATE TABLE books (
-                id SERIAL PRIMARY KEY,
-                digest TEXT NOT NULL UNIQUE,
-                title TEXT NOT NULL,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-                -- add more Book fields here
-            )
+CREATE TABLE books (
+    id          SERIAL PRIMARY KEY,
+    md5_hash    BYTEA NOT NULL UNIQUE,
+    ext_id      TEXT,
+    version     TEXT,
+    title       TEXT NOT NULL,
+    encoding    TEXT NOT NULL,
+    lang        TEXT,
+    genre       TEXT,
+    filename    TEXT NOT NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CHECK (octet_length(md5_hash) = 16)
+)
             "#,
     )
     .execute(&mut *tx)
     .await?;
+
+    sqlx::query("ALTER TABLE books OWNER TO books")
+        .execute(&mut *tx)
+        .await?;
 
     sqlx::query(
         r#"
@@ -77,6 +87,10 @@ pub async fn init_schema(admin_pool: &PgPool, overwrite: bool) -> Result<(), sql
     )
     .execute(&mut *tx)
     .await?;
+
+    sqlx::query("ALTER TABLE persons OWNER TO books")
+        .execute(&mut *tx)
+        .await?;
 
     sqlx::query(
         r#"
@@ -90,7 +104,11 @@ pub async fn init_schema(admin_pool: &PgPool, overwrite: bool) -> Result<(), sql
     .execute(&mut *tx)
     .await?;
 
-    sqlx::query("CREATE INDEX idx_books_digest ON books(digest)")
+    sqlx::query("ALTER TABLE book_authors OWNER TO books")
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query("CREATE INDEX idx_books_md5_hash ON books(md5_hash)")
         .execute(&mut *tx)
         .await?;
     sqlx::query("CREATE INDEX idx_persons_norm ON persons(normalized_name)")
@@ -125,13 +143,13 @@ pub async fn init_schema(admin_pool: &PgPool, overwrite: bool) -> Result<(), sql
 //     rt.block_on(async {
 //         let mut tx = pool.begin().await?;
 
-//         // Insert book if not exists by digest
+//         // Insert book if not exists by md5_hash
 //         let book_row = sqlx::query!(
-//             r#"INSERT INTO books (digest, title /* + other fields */)
+//             r#"INSERT INTO books (md5_hash, title /* + other fields */)
 //                VALUES ($1, $2 /* + values */)
-//                ON CONFLICT (digest) DO UPDATE SET digest = EXCLUDED.digest
+//                ON CONFLICT (md5_hash) DO UPDATE SET md5_hash = EXCLUDED.md5_hash
 //                RETURNING id::text"#,
-//             book.digest, book.title /* ... */
+//             book.md5_hash, book.title /* ... */
 //         ).fetch_one(&mut *tx).await?;
 
 //         let book_id = book_row.id;
@@ -150,7 +168,7 @@ pub async fn init_schema(admin_pool: &PgPool, overwrite: bool) -> Result<(), sql
 //     })
 // }
 
-// /// Delete book (by digest, like OCaml)
+// /// Delete book (by md5_hash)
 // pub fn delete_book(book: &Book) -> Result<String, sqlx::Error> {
 //     // similar blocking + query pattern
 //     // ...

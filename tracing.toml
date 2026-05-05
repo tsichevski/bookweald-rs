@@ -26,7 +26,7 @@ rotation = "daily"
 max_log_files = 30
 non_blocking = true
 
-# ── Console layer (restricted to info+) ──
+# ── Console layer ──
 [layer.console]
 type = "fmt"
 writer = "stdout"

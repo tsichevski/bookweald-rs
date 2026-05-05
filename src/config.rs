@@ -79,14 +79,8 @@ pub struct BookwealdConfig {
     #[serde(default = "default_max_component_len")]
     pub max_component_len: usize,
 
-    pub log_file: Option<PathBuf>,
     pub blacklist: Option<PathBuf>,
     pub alias_file: Option<PathBuf>,
-
-    #[serde(default = "default_drop_existing_log_file_on_start")]
-    pub drop_existing_log_file_on_start: bool,
-
-    pub log_level: Option<String>,
 
     #[serde(default)]
     pub database: DatabaseConfig,
@@ -100,10 +94,6 @@ fn default_dry_run() -> bool {
 
 fn default_max_component_len() -> usize {
     0
-}
-
-fn default_drop_existing_log_file_on_start() -> bool {
-    false
 }
 
 fn default_library_dir() -> PathBuf {
@@ -125,11 +115,8 @@ impl Default for BookwealdConfig {
             target_dir: default_target_dir(),
             dry_run: default_dry_run(),
             max_component_len: default_max_component_len(),
-            log_file: None,
             blacklist: None,
             alias_file: None,
-            drop_existing_log_file_on_start: default_drop_existing_log_file_on_start(),
-            log_level: None,
             database: DatabaseConfig::default(),
         }
     }

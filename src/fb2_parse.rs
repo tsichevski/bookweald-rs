@@ -17,7 +17,10 @@ fn apply_aliases<'a>(p: &'a Person, aliases: &'a Option<HashMap<String, Person>>
             let key = &p.id;
             match table.get(key) {
                 None => p,
-                Some(ap) => &ap,
+                Some(ap) => {
+                    tracing::debug!("{} replaced by alias {}", key, &ap.id);
+                    &ap
+                }
             }
         }
     }
@@ -195,36 +198,28 @@ pub fn parse_book_info(path: &Path, aliases: &Option<HashMap<String, Person>>) -
         buf.clear();
     }
 
-    let title = match title {
-        None => anyhow::bail!("No <book-title> found in FB2 file"),
-        Some(title) => title,
-    };
+    let title = title.ok_or_else(|| anyhow::anyhow!("No <book-title> found in FB2 file"))?;
 
     // Check title is not empty after normalization
-    match normalize_chunk(&title) {
-        None => Err(anyhow::anyhow!(
-            "Book title normalizes to empty: '{}'",
-            &title
-        )),
-        _ => {
-            append_current_author_unique(
-                &mut current_last_name,
-                &mut current_first_name,
-                &mut current_middle_name,
-                &mut authors,
-            );
+    normalize_chunk(&title)
+        .with_context(|| format!("Book title normalizes to empty: '{}'", &title))?;
 
-            let encoding = encoding.unwrap_or("UTF-8".to_string());
-            Ok(Book {
-                title,
-                authors,
-                ext_id,
-                version,
-                lang,
-                genre,
-                filename,
-                encoding,
-            })
-        }
-    }
+    append_current_author_unique(
+        &mut current_last_name,
+        &mut current_first_name,
+        &mut current_middle_name,
+        &mut authors,
+    );
+
+    let encoding = encoding.unwrap_or("UTF-8".to_string());
+    Ok(Book {
+        title,
+        authors,
+        ext_id,
+        version,
+        lang,
+        genre,
+        filename,
+        encoding,
+    })
 }
