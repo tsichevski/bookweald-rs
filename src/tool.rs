@@ -348,7 +348,7 @@ fn main() -> Result<()> {
             };
 
             runtime.block_on(async {
-                index::index(&not_black, aliases, *overwrite)?;
+                index::index(&not_black, &aliases, *overwrite)?;
 
                 tracing::info!("Indexing completed: books processed: {}", not_black.len(),);
 

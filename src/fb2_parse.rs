@@ -1,44 +1,64 @@
-use crate::book::Book;
-use crate::normalize::normalize_chunk;
-use crate::person::{Person, normalize, person_create_exn};
-use ahash::HashMap;
+use anyhow::{Context, Result};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Cursor, Read};
 use std::path::Path;
 
-fn apply_aliases(p: Person, aliases: Option<&HashMap<String, Person>>) -> Person {
-    let key = &p.id;
-    // TODO trace::debug!("Alias %s replaced by %s in %s" candidate.id, e.id, path);
-    aliases.and_then(|a| a.get(key)).cloned().unwrap_or(p)
+use crate::book::Book;
+use crate::normalize::normalize_chunk;
+use crate::person::{Person, normalize, person_create_exn};
+use ahash::HashMap;
+
+fn apply_aliases<'a>(p: &'a Person, aliases: &'a Option<HashMap<String, Person>>) -> &'a Person {
+    match aliases {
+        None => p,
+        Some(table) => {
+            let key = &p.id;
+            match table.get(key) {
+                None => p,
+                Some(ap) => &ap,
+            }
+        }
+    }
 }
 
-pub fn parse_book_info(
-    path: &Path,
-    aliases: Option<&HashMap<String, Person>>,
-) -> Result<Book, Box<dyn std::error::Error>> {
+pub fn parse_book_info(path: &Path, aliases: &Option<HashMap<String, Person>>) -> Result<Book> {
     let filename = path
         .file_stem()
         .and_then(|s| s.to_str())
-        .unwrap_or_default()
+        .context(format!(
+            "Invalid UTF-8 filename or missing stem: {}",
+            path.display()
+        ))?
         .to_string();
 
-    // ── Create reader (handles ZIP without lifetime issues) ──
-    let mut reader: Reader<Box<dyn BufRead>> =
-        if path.extension().and_then(|e| e.to_str()) == Some("zip") {
-            let zip_file = File::open(path)?;
-            let mut archive = zip::ZipArchive::new(zip_file)?;
-            let mut fb2_entry = archive.by_index(0)?; // first .fb2 inside ZIP
+    // ── Create reader (handles ZIP) ──
+    let mut reader: Reader<Box<dyn BufRead>> = if path.extension().and_then(|e| e.to_str())
+        == Some("zip")
+    {
+        let zip_file =
+            File::open(path).with_context(|| format!("Failed to open ZIP: {}", path.display()))?;
 
-            // Read entire entry into memory
-            let mut content = Vec::new();
-            fb2_entry.read_to_end(&mut content)?;
-            Reader::from_reader(Box::new(Cursor::new(content)))
-        } else {
-            let file = File::open(path)?;
-            Reader::from_reader(Box::new(BufReader::new(file)))
-        };
+        let mut archive = zip::ZipArchive::new(zip_file).context("Failed to open ZIP archive")?;
+
+        let mut fb2_entry = archive
+            .by_index(0)
+            .context("ZIP archive contains no files")?;
+
+        // Read entire entry into memory
+        let mut content = Vec::new();
+        fb2_entry
+            .read_to_end(&mut content)
+            .context("Failed to read FB2 from ZIP")?;
+
+        Reader::from_reader(Box::new(Cursor::new(content)))
+    } else {
+        let file =
+            File::open(path).with_context(|| format!("Failed to open FB2: {}", path.display()))?;
+
+        Reader::from_reader(Box::new(BufReader::new(file)))
+    };
 
     // ── Configuration ──
     let config = reader.config_mut();
@@ -59,15 +79,15 @@ pub fn parse_book_info(
 
     let mut authors: Vec<Person> = Vec::new();
 
-    // Helper that consumes the current name fields and appends a unique author.
+    // Helper that consumes the current name fields and appends an unique author.
     let append_current_author_unique =
         |last: &mut Option<String>,
          first: &mut Option<String>,
          middle: &mut Option<String>,
          authors: &mut Vec<Person>| {
             match (&last, &first, &middle) {
+                // Skip authors with only middlename set
                 (None, _, None) => {
-                    // Skip authors with only middlename set
                     *middle = None;
                 }
                 (last_name, first_name, middle_name) => {
@@ -78,9 +98,9 @@ pub fn parse_book_info(
                         ),
                         Some(_id) => {
                             let candidate = person_create_exn(last_name, first_name, middle_name);
-                            let candidate = apply_aliases(candidate, aliases);
+                            let candidate = apply_aliases(&candidate, aliases);
                             if !authors.iter().any(|y| y.id == candidate.id) {
-                                authors.push(candidate);
+                                authors.push(candidate.clone());
                             }
                         }
                     }
@@ -103,10 +123,9 @@ pub fn parse_book_info(
             }
 
             Ok(Event::Start(ref e)) => {
-                let name = e.name().as_ref().to_vec();
-                path_stack.push(name);
+                path_stack.push(e.name().as_ref().to_vec());
 
-                let path_slice: Vec<&[u8]> = path_stack.iter().map(|v| v.as_slice()).collect();
+                let path_slice: Vec<&[u8]> = path_stack.iter().map(Vec::as_slice).collect();
 
                 match path_slice.as_slice() {
                     [
@@ -125,7 +144,11 @@ pub fn parse_book_info(
             }
 
             Ok(Event::End(_)) => {
-                path_stack.pop();
+                if let Some(t) = path_stack.pop() {
+                    if t == b"description" {
+                        break;
+                    }
+                }
             }
 
             Ok(Event::Text(e)) => {
@@ -135,7 +158,7 @@ pub fn parse_book_info(
                     continue;
                 }
 
-                let path_slice: Vec<&[u8]> = path_stack.iter().map(|v| v.as_slice()).collect();
+                let path_slice: Vec<&[u8]> = path_stack.iter().map(Vec::as_slice).collect();
                 let text = text.to_string();
                 match path_slice.as_slice() {
                     // title-info
@@ -162,21 +185,27 @@ pub fn parse_book_info(
                 }
             }
 
-            Ok(Event::Eof) => break,
-            Err(e) => return Err(Box::new(e)),
+            Ok(Event::Eof) => anyhow::bail!(format!(
+                "No <description> found in FB2 file {}",
+                path.display()
+            )),
+            Err(e) => return Err(e).context(format!("XML parse error in {}", path.display())),
             _ => {}
         }
         buf.clear();
     }
 
     let title = match title {
-        None => return Err("No <book-title> found in FB2 file".into()),
+        None => anyhow::bail!("No <book-title> found in FB2 file"),
         Some(title) => title,
     };
 
     // Check title is not empty after normalization
     match normalize_chunk(&title) {
-        None => Err(format!("Book title normalizes to empty: '{}'", &title).into()),
+        None => Err(anyhow::anyhow!(
+            "Book title normalizes to empty: '{}'",
+            &title
+        )),
         _ => {
             append_current_author_unique(
                 &mut current_last_name,
