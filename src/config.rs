@@ -79,9 +79,6 @@ pub struct BookwealdConfig {
     #[serde(default = "default_max_component_len")]
     pub max_component_len: usize,
 
-    #[serde(default = "default_jobs")]
-    pub jobs: usize,
-
     pub log_file: Option<PathBuf>,
     pub blacklist: Option<PathBuf>,
     pub alias_file: Option<PathBuf>,
@@ -103,12 +100,6 @@ fn default_dry_run() -> bool {
 
 fn default_max_component_len() -> usize {
     0
-}
-
-fn default_jobs() -> usize {
-    std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
 }
 
 fn default_drop_existing_log_file_on_start() -> bool {
@@ -134,7 +125,6 @@ impl Default for BookwealdConfig {
             target_dir: default_target_dir(),
             dry_run: default_dry_run(),
             max_component_len: default_max_component_len(),
-            jobs: default_jobs(),
             log_file: None,
             blacklist: None,
             alias_file: None,

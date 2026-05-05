@@ -1,8 +1,10 @@
 use crate::person::{Person, person_create_exn};
 use ahash::{HashMap, HashMapExt};
+use anyhow::{Context, Result};
 use serde_json;
 use std::fs::File;
 use std::io::BufReader;
+use std::path::PathBuf;
 
 /// Author alias handling for book metadata normalization.
 fn person_from_string_exn(s: &str) -> Person {
@@ -26,36 +28,36 @@ fn person_from_string_exn(s: &str) -> Person {
     }
 }
 
-pub fn load_aliases(path: &str) -> HashMap<String, Person> {
-    let file =
-        File::open(path).unwrap_or_else(|e| panic!("Cannot open aliases file '{}': {}", path, e));
+pub fn load_aliases(path: &PathBuf) -> Result<HashMap<String, Person>> {
+    let file = File::open(path).context("Cannot open aliases file")?;
 
     let reader = BufReader::new(file);
-
-    let json: serde_json::Value = serde_json::from_reader(reader)
-        .unwrap_or_else(|e| panic!("Invalid JSON in '{}': {}", path, e));
+    let json = serde_json::from_reader(reader)?;
+    let obj = match json {
+        serde_json::Value::Object(obj) => obj,
+        _ => anyhow::bail!(format!(
+            "aliases.json must be a JSON object.\nFile: {:?}",
+            path
+        )),
+    };
 
     let mut table = HashMap::with_capacity(512);
 
-    if let serde_json::Value::Object(obj) = json {
-        for (canonical, aliases_json) in obj {
-            if let serde_json::Value::Array(alias_list) = aliases_json {
-                let canonical_person = person_from_string_exn(canonical.trim());
-                for alias_val in alias_list {
-                    if let serde_json::Value::String(alias) = alias_val {
-                        let trimmed = alias.trim().to_string();
-                        if !trimmed.is_empty() {
-                            table.insert(trimmed, canonical_person.clone());
-                        }
+    for (canonical, aliases_json) in obj {
+        if let serde_json::Value::Array(alias_list) = aliases_json {
+            let canonical_person = person_from_string_exn(canonical.trim());
+            for alias_val in alias_list {
+                if let serde_json::Value::String(alias) = alias_val {
+                    let trimmed = alias.trim().to_string();
+                    if !trimmed.is_empty() {
+                        table.insert(trimmed, canonical_person.clone());
                     }
                 }
             }
         }
-    } else {
-        panic!("aliases.json must be a JSON object.\nFile: {}", path);
     }
 
-    table
+    Ok(table)
 }
 
 #[cfg(test)]

@@ -10,7 +10,9 @@ use std::{
     usize,
 };
 
+use bookweald_rs::alias;
 use bookweald_rs::config::BookwealdConfig;
+use bookweald_rs::index;
 use bookweald_rs::validate;
 
 #[derive(Parser, Debug)]
@@ -129,7 +131,15 @@ enum Commands {
     Group {/* TODO */},
 
     /// TODO Parse all FB2 files in the specified directory and add them to index
-    Index {/* TODO */},
+    Index {
+        /// Paths to files or directories to index
+        #[arg(value_name = "PATH", required = true, num_args(1..))]
+        input: Vec<PathBuf>,
+
+        /// Overwrite existing books
+        #[arg(short, long)]
+        overwrite: bool,
+    },
 }
 
 /// Recursively scans the given list of paths (files or directories)
@@ -186,13 +196,11 @@ fn main() -> Result<()> {
         } => {
             let config = bookweald_rs::config::BookwealdConfig::load(args.config)?;
             let final_output = output.as_deref().unwrap_or(&config.library_dir);
-            let jobs = args.jobs.unwrap_or(config.jobs);
             let effective_dry_run = args.dry_run || config.dry_run;
 
             tracing::info!(
-                "Extracting {} ZIP(s) using {} thread(s) (dry_run={}, force={})",
+                "Extracting {} ZIP(s) (dry_run={}, force={})",
                 input.len(),
-                jobs,
                 effective_dry_run,
                 force
             );
@@ -213,14 +221,12 @@ fn main() -> Result<()> {
             reverse,
         } => {
             let config = bookweald_rs::config::BookwealdConfig::load(args.config)?;
-            let jobs = args.jobs.unwrap_or(config.jobs);
             let effective_dry_run = args.dry_run || config.dry_run;
             let xsd_ref = xsd.as_deref().and_then(|p| p.to_str());
 
             tracing::info!(
-                "Validating {} locations using {} thread(s) (dry_run={})",
+                "Validating {} locations (dry_run={})",
                 input.len(),
-                jobs,
                 effective_dry_run,
             );
 
@@ -313,6 +319,46 @@ fn main() -> Result<()> {
                 }
             })
         }
+        Commands::Index { input, overwrite } => {
+            let config = bookweald_rs::config::BookwealdConfig::load(args.config)?;
+            let effective_dry_run = args.dry_run || config.dry_run;
+
+            tracing::info!(
+                "Indexing {} location(s) (dry_run={})",
+                input.len(),
+                effective_dry_run,
+            );
+
+            let mut files: Vec<PathBuf> = Vec::new();
+            for path in input {
+                files.extend(collect_fb2_files(path)?);
+            }
+            let total = files.len();
+            let blacklist = &config.blacklist;
+            let blacklisted = blacklist::blacklisted(blacklist)?;
+            let (black, not_black): (Vec<_>, Vec<_>) =
+                files.into_iter().partition(|p| blacklisted(p));
+            if !black.is_empty() {
+                tracing::info!("{} files, {} blacklisted", total, black.len());
+            }
+
+            let aliases = match config.alias_file {
+                None => None,
+                Some(path) => Some(alias::load_aliases(&path)?),
+            };
+
+            runtime.block_on(async {
+                index::index(&not_black, aliases, *overwrite)?;
+
+                tracing::info!("Indexing completed: books processed: {}", not_black.len(),);
+
+                if effective_dry_run {
+                    tracing::info!("[dry-run] Db was not modified");
+                }
+                Ok(())
+            })
+        }
+
         _ => anyhow::bail!("Command {:?} is not implemented yet", &args.command),
     }
 }
