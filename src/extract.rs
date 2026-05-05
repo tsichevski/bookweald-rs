@@ -18,11 +18,28 @@ use tracing;
 /// * `output` - Target directory where FB2 files will be placed.
 /// * `dry_run` - If `true`, only logs what *would* happen without writing anything.
 /// * `force` - If `true`, overwrites existing FB2 files in the output directory.
-pub fn extract_zip_multi(inputs: &[PathBuf], output: &Path, dry_run: bool, force: bool) {
-    let (successes, errors): (Vec<_>, Vec<_>) = inputs
+pub fn extract_zip_multi(
+    inputs: &[PathBuf],
+    output: &Path,
+    dry_run: bool,
+    force: bool,
+) -> Result<()> {
+    let results: Vec<_> = inputs
         .par_iter()
-        .flat_map(|zip_path| extract_single_zip(zip_path, output, dry_run, force))
-        .partition(Result::is_ok);
+        .map(|zip_path| extract_single_zip(zip_path, output, dry_run, force))
+        .collect();
+
+    let mut all_entry_results = Vec::new();
+
+    for outer in results {
+        match outer {
+            Ok(inner_vec) => all_entry_results.extend(inner_vec),
+            Err(e) => return Err(e),
+        }
+    }
+
+    let (successes, errors): (Vec<_>, Vec<_>) =
+        all_entry_results.par_iter().partition(|r| r.is_ok());
 
     let num_success = successes.len();
     let num_errors = errors.len();
@@ -38,6 +55,8 @@ pub fn extract_zip_multi(inputs: &[PathBuf], output: &Path, dry_run: bool, force
     if dry_run {
         tracing::info!("[dry-run] No files or directories were created");
     }
+
+    Ok(())
 }
 
 /// Processes a single ZIP archive and extracts all contained `.fb2` files.
@@ -48,33 +67,25 @@ pub fn extract_zip_multi(inputs: &[PathBuf], output: &Path, dry_run: bool, force
 ///
 /// # Returns
 ///
-/// A `Vec<Result<()>>` — one result per FB2 file found (or per error).
+/// A `Vec<Result<()>>` — one result per FB2 file found.
 fn extract_single_zip(
     zip_path: &Path,
     target_dir: &Path,
     dry_run: bool,
     force: bool,
-) -> Vec<Result<()>> {
-    let mut result: Vec<Result<()>> = Vec::new();
-    let file = match fs::File::open(zip_path) {
-        Ok(file) => file,
-        Err(e) => {
-            result.push(Err(e.into()));
-            return result;
-        }
-    };
+) -> Result<Vec<Result<()>>> {
+    let file = fs::File::open(zip_path)?;
 
     let archive = match zip::ZipArchive::new(file)
         .with_context(|| format!("Not a valid ZIP file: {}", zip_path.display()))
     {
         Ok(v) => v,
         Err(e) => {
-            result.push(Err(e));
-            return result;
+            return Err(e);
         }
     };
 
-    (0..archive.len())
+    Ok((0..archive.len())
         .into_par_iter()
         .map_init(
             {
@@ -107,11 +118,11 @@ fn extract_single_zip(
                 }
 
                 if dry_run {
-                    tracing::debug!("[dry-run] Would extract: {}", basename);
+                    tracing::debug!("[dry-run] Would write: {}", basename);
                     return Ok(());
                 }
 
-                // Real extraction
+                // Do real changes in fs
                 if let Some(parent) = out_path.parent() {
                     fs::create_dir_all(parent).with_context(|| {
                         format!("Cannot create directory: {}", parent.display())
@@ -130,5 +141,5 @@ fn extract_single_zip(
                 Ok(())
             },
         )
-        .collect()
+        .collect())
 }

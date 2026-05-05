@@ -31,12 +31,6 @@ pub async fn connect_async(
     Ok(pool)
 }
 
-// Keep a sync wrapper for rayon / main thread if needed
-pub fn connect(host: &str, port: u16, user: &str, password: &str, dbname: &str) -> Result<PgPool> {
-    let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
-    rt.block_on(async { connect_async(host, port, user, password, dbname).await })
-}
-
 /// Application stores the returned pool
 pub fn store_pool(pool: PgPool) {
     DB_POOL.set(pool).expect("Pool already stored");

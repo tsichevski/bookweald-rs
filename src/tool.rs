@@ -165,19 +165,6 @@ pub fn collect_fb2_files(path: &PathBuf) -> Result<Vec<PathBuf>> {
     Ok(fb2_files)
 }
 
-fn run_parallel<OP, R>(jobs: usize, op: OP) -> R
-where
-    OP: FnOnce() -> R + Send,
-    R: Send,
-{
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(jobs)
-        .build()
-        .unwrap();
-
-    pool.install(op)
-}
-
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -189,7 +176,7 @@ fn main() -> Result<()> {
     match &args.command {
         Commands::Init { force } => {
             tracing::info!("Creating default configuration (force: {})", force);
-            BookwealdConfig::create_default(args.config, *force)?;
+            BookwealdConfig::create_default(args.config, *force)
         }
 
         Commands::Extract {
@@ -249,13 +236,15 @@ fn main() -> Result<()> {
             if !black.is_empty() {
                 tracing::info!("{} files, {} blacklisted", total, black.len());
             }
-            return run_parallel(jobs, || {
+
+            runtime.block_on(async {
                 let results: Vec<_> = validate::validate(&not_black, xsd_ref);
 
                 if let Some(file) = blacklist {
                     if let Some(parent) = file.parent() {
                         fs::create_dir_all(parent)?;
                     }
+
                     let mut ch: File = OpenOptions::new()
                         .append(true)
                         .create(true)
@@ -288,7 +277,7 @@ fn main() -> Result<()> {
                     tracing::info!("[dry-run] Blacklist was not modified");
                 }
                 Ok(())
-            });
+            })
         }
 
         Commands::SchemaInit { overwrite } => {
@@ -296,26 +285,34 @@ fn main() -> Result<()> {
             let dry_run = args.dry_run || config.dry_run;
             let cd = config.database;
             tracing::info!("Initialize DB schema");
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async {
-                    let admin_pool =
-                        db::connect_async(&cd.host, cd.port, &cd.admin, &cd.admin_passwd, &cd.name)
-                            .await
-                            .expect("Failed to connect as admin");
-                    if !dry_run {
-                        // if overwrite then
-                        //   Db.drop_schema admconn;
-                        db::init_schema(&admin_pool, *overwrite)
-                            .await
-                            .expect("Failed to replace schema");
+            runtime.block_on(async {
+                let admin_pool = match db::connect_async(
+                    &cd.host,
+                    cd.port,
+                    &cd.admin,
+                    &cd.admin_passwd,
+                    &cd.name,
+                )
+                .await
+                {
+                    Ok(p) => p,
+                    Err(e) => {
+                        anyhow::bail!(format!("Failed to create admin database pool: {}", e))
                     }
-                })
-        }
-        _ => println!("Command not implemented yet"),
-    }
+                };
 
-    Ok(())
+                if dry_run {
+                    Ok(())
+                } else {
+                    match db::init_schema(&admin_pool, *overwrite).await {
+                        Ok(()) => Ok(()),
+                        Err(e) => {
+                            anyhow::bail!(format!("Failed to initialize database schema: {}", e))
+                        }
+                    }
+                }
+            })
+        }
+        _ => anyhow::bail!("Command {:?} is not implemented yet", &args.command),
+    }
 }

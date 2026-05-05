@@ -204,7 +204,7 @@ impl BookwealdConfig {
     }
 
     /// Create default config.json
-    pub fn create_default(location: Option<PathBuf>, overwrite: bool) -> anyhow::Result<bool> {
+    pub fn create_default(location: Option<PathBuf>, overwrite: bool) -> anyhow::Result<()> {
         let path = Self::eff_location(location)?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -215,7 +215,7 @@ impl BookwealdConfig {
                 "Config already exists and --force was not used: {}",
                 path.display()
             );
-            return Ok(false);
+            return Ok(());
         }
 
         let cfg = Self::default();
@@ -223,6 +223,6 @@ impl BookwealdConfig {
         std::fs::write(&path, pretty + "\n")?;
 
         println!("✅ Created default configuration: {}", path.display());
-        Ok(true)
+        Ok(())
     }
 }
