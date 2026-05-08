@@ -1,5 +1,5 @@
 use bookweald_rs::alias::load_aliases;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[test]
 fn test_load_aliases_from_sample_fixture() {
@@ -9,11 +9,7 @@ fn test_load_aliases_from_sample_fixture() {
         .join("fixtures")
         .join("aliases.json");
 
-    let fixture_str = fixture_path
-        .to_str()
-        .expect("fixture path must be valid UTF-8");
-
-    let aliases = load_aliases(fixture_str);
+    let aliases = load_aliases(&fixture_path).expect("Cannot load aliases");
 
     // Basic presence checks
     assert!(aliases.contains_key("Толстой"));
@@ -34,7 +30,7 @@ fn test_load_aliases_from_sample_fixture() {
 #[test]
 #[should_panic(expected = "Cannot open aliases file")]
 fn test_load_aliases_missing_file() {
-    load_aliases("/non/existent/aliases.json");
+    load_aliases(&PathBuf::from("/non/existent/aliases.json")).expect("Canno load aliases");
 }
 
 #[test]
@@ -46,8 +42,6 @@ fn test_load_aliases_invalid_json() {
         .join("bads")
         .join("aliases.json");
 
-    let bad_str = bad_path.to_str().expect("fixture path must be valid UTF-8");
-
     // For simplicity we can also just pass a non-JSON path, but a dedicated fixture is cleaner
-    load_aliases(bad_str);
+    load_aliases(&bad_path).expect("Invalid JSON");
 }

@@ -1,8 +1,9 @@
+use crate::book::Book;
+use ahash::{HashSet, HashSetExt};
 use anyhow::{Context, Result};
 use futures_util::TryStreamExt;
 use sqlx::PgPool;
 use sqlx::Row;
-use std::collections::HashSet;
 use std::sync::OnceLock;
 use tracing::*;
 
@@ -62,10 +63,8 @@ CREATE TABLE books (
     lang        TEXT,
     genre       TEXT,
     filename    TEXT NOT NULL,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CHECK (octet_length(md5_hash) = 16)
-)
-            "#,
+)"#,
     )
     .execute(&mut *tx)
     .await?;
@@ -118,13 +117,14 @@ CREATE TABLE books (
 /// Load all existing canonical MD5 digests from the books table.
 /// Used for fast incremental indexing.
 pub async fn load_existing_md5s(pool: &DbPool) -> Result<HashSet<[u8; 16]>> {
-    let mut md5s = HashSet::with_capacity(500_000); // pre-allocate for 1M scale
+    let mut md5s = HashSet::new();
 
     let mut rows = sqlx::query("SELECT md5_hash FROM books").fetch(pool);
 
     while let Some(row) = rows.try_next().await? {
-        let md5_bytes: Vec<u8> = row.try_get("md5")?;
+        let md5_bytes: Vec<u8> = row.try_get("md5_hash")?;
         if md5_bytes.len() == 16 {
+            // FIXME: can I consume md5_bytes instead of making copy?
             let mut arr = [0u8; 16];
             arr.copy_from_slice(&md5_bytes);
             md5s.insert(arr);
@@ -135,64 +135,35 @@ pub async fn load_existing_md5s(pool: &DbPool) -> Result<HashSet<[u8; 16]>> {
     Ok(md5s)
 }
 
-// /// Find or insert person (UPSERT, like OCaml)
-// pub fn find_or_insert_person(person: &Person) -> Result<String, sqlx::Error> {  // returns DB id as string
-//     let pool = DB_POOL.get().ok_or(...) ?;
-//     let rt = tokio::runtime::Runtime::new()?;
+pub async fn insert_batch(pool: &PgPool, batch: &[(Book, [u8; 16])]) -> Result<()> {
+    // FIXME: use one for cycle for all
+    let md5_hashs: Vec<&[u8]> = batch.iter().map(|(_, d)| d.as_slice()).collect();
+    let ext_ids: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
+    let versions: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
+    let titles: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
+    let langs: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
+    let genres: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
+    let filenames: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
+    let encodings: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
 
-//     rt.block_on(async {
-//         let row = sqlx::query!(
-//             r#"INSERT INTO persons (normalized_name)
-//                VALUES ($1)
-//                ON CONFLICT (normalized_name) DO UPDATE SET normalized_name = EXCLUDED.normalized_name
-//                RETURNING id::text"#,
-//             person.normalized_name
-//         ).fetch_one(pool).await?;
-//         Ok(row.id)
-//     })
-// }
+    sqlx::query(
+        "INSERT INTO books (md5_hash, ext_id, version, title, lang, genre, filename, encoding)
+         SELECT * FROM UNNEST($1::bytea[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[])"
+    )
+    .bind(md5_hashs)
+    .bind(ext_ids)
+    .bind(versions)
+    .bind(titles)
+    .bind(langs)
+    .bind(genres)
+    .bind(filenames)
+    .bind(encodings)
 
-// /// Find or insert book + link authors (core operation from OCaml)
-// pub fn find_or_insert_book(book: &Book) -> Result<String, sqlx::Error> {
-//     let pool = DB_POOL.get().ok_or(...) ?;
-//     let rt = tokio::runtime::Runtime::new()?;
+    .execute(pool)
+    .await?;
 
-//     rt.block_on(async {
-//         let mut tx = pool.begin().await?;
-
-//         // Insert book if not exists by md5_hash
-//         let book_row = sqlx::query!(
-//             r#"INSERT INTO books (md5_hash, title /* + other fields */)
-//                VALUES ($1, $2 /* + values */)
-//                ON CONFLICT (md5_hash) DO UPDATE SET md5_hash = EXCLUDED.md5_hash
-//                RETURNING id::text"#,
-//             book.md5_hash, book.title /* ... */
-//         ).fetch_one(&mut *tx).await?;
-
-//         let book_id = book_row.id;
-
-//         // Link authors (find_or_insert each + insert links)
-//         for author in &book.authors {  // assume Book has authors: Vec<Person>
-//             let person_id = find_or_insert_person(author)?;  // recursive call ok inside tx if adjusted
-//             sqlx::query!(
-//                 "INSERT INTO book_authors (book_id, person_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-//                 book_id.parse::<i32>()?, person_id.parse::<i32>()?
-//             ).execute(&mut *tx).await?;
-//         }
-
-//         tx.commit().await?;
-//         Ok(book_id)
-//     })
-// }
-
-// /// Delete book (by md5_hash)
-// pub fn delete_book(book: &Book) -> Result<String, sqlx::Error> {
-//     // similar blocking + query pattern
-//     // ...
-//     todo!("Implement delete matching OCaml")
-// }
-
-// Add close, drop_schema, etc. as needed in the same file
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -233,9 +204,9 @@ mod tests {
         println!("✅ connect / store_pool / init_schema test passed");
     }
 
-    #[test]
-    fn test_connect_invalid() {
-        let result = connect("localhost", 5432, "baduser", "wrongpass", "nonexistent");
+    #[tokio::test]
+    async fn test_connect_invalid() {
+        let result = connect_async("localhost", 5432, "baduser", "wrongpass", "nonexistent").await;
         assert!(result.is_err());
     }
 }

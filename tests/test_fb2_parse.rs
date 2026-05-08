@@ -1,6 +1,6 @@
+use ahash::HashMap;
 use bookweald_rs::fb2_parse::parse_book_info;
 use bookweald_rs::person::Person;
-use std::collections::HashMap;
 use std::path::Path;
 
 /// Helper for success test cases (with optional alias support).
@@ -14,7 +14,7 @@ fn test_success(
     first_name: Option<&str>,
     middle_name: Option<&str>,
     encoding: &str,
-    aliases: Option<&HashMap<String, Person>>,
+    aliases: Option<HashMap<String, Person>>,
 ) {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let fixture_path = Path::new(manifest_dir)
@@ -22,7 +22,7 @@ fn test_success(
         .join("fixtures")
         .join(filename);
 
-    let book = parse_book_info(&fixture_path, aliases)
+    let book = parse_book_info(&fixture_path, &aliases)
         .unwrap_or_else(|e| panic!("Failed to parse {}: {}", filename, e));
 
     assert_eq!(book.title, title, "Wrong title in {}", filename);
@@ -53,7 +53,7 @@ fn test_failure(filename: &str, error_contains: &str) {
         .join("tests")
         .join("bads")
         .join(filename);
-    let err = parse_book_info(&bad_path, None).unwrap_err();
+    let err = parse_book_info(&bad_path, &None).unwrap_err();
     assert!(
         err.to_string().contains(error_contains),
         "Expected error containing '{}', got: {}",
@@ -142,8 +142,7 @@ fn test_parse_fb2_with_aliases() {
         .join("fixtures")
         .join("aliases.json");
 
-    let aliases =
-        bookweald_rs::alias::load_aliases(aliases_path.to_str().expect("valid UTF-8 path"));
+    let aliases = bookweald_rs::alias::load_aliases(&aliases_path).expect("Cannot load aliases");
 
     test_success(
         "aliased_author.fb2",
@@ -152,7 +151,7 @@ fn test_parse_fb2_with_aliases() {
         Some("Лев"),
         Some("Николаевич"),
         "UTF-8",
-        Some(&aliases),
+        Some(aliases),
     );
 }
 

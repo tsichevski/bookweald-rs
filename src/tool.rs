@@ -130,7 +130,7 @@ enum Commands {
     /// TODO Group books by author (create author sub-directories)
     Group {/* TODO */},
 
-    /// TODO Parse all FB2 files in the specified directory and add them to index
+    /// Parse all FB2 files in the specified directory and add them to DB index
     Index {
         /// Paths to files or directories to index
         #[arg(value_name = "PATH", required = true, num_args(1..))]
