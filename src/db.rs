@@ -136,15 +136,26 @@ pub async fn load_existing_md5s(pool: &DbPool) -> Result<HashSet<[u8; 16]>> {
 }
 
 pub async fn insert_batch(pool: &PgPool, batch: &[(Book, [u8; 16])]) -> Result<()> {
-    // FIXME: use one for cycle for all
-    let md5_hashs: Vec<&[u8]> = batch.iter().map(|(_, d)| d.as_slice()).collect();
-    let ext_ids: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
-    let versions: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
-    let titles: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
-    let langs: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
-    let genres: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
-    let filenames: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
-    let encodings: Vec<&str> = batch.iter().map(|(b, _)| b.title.as_str()).collect();
+    let n = batch.len();
+    let mut md5_hashs: Vec<&[u8]> = Vec::with_capacity(n);
+    let mut ext_ids: Vec<Option<&str>> = Vec::with_capacity(n);
+    let mut versions: Vec<Option<&str>> = Vec::with_capacity(n);
+    let mut titles: Vec<&str> = Vec::with_capacity(n);
+    let mut langs: Vec<Option<&str>> = Vec::with_capacity(n);
+    let mut genres: Vec<Option<&str>> = Vec::with_capacity(n);
+    let mut filenames: Vec<&str> = Vec::with_capacity(n);
+    let mut encodings: Vec<&str> = Vec::with_capacity(n);
+
+    for (b, md5) in batch {
+        md5_hashs.push(md5.as_slice());
+        ext_ids.push(b.ext_id.as_deref());
+        versions.push(b.version.as_deref());
+        titles.push(&b.title);
+        langs.push(b.lang.as_deref());
+        genres.push(b.genre.as_deref());
+        filenames.push(&b.filename);
+        encodings.push(&b.encoding);
+    }
 
     sqlx::query(
         "INSERT INTO books (md5_hash, ext_id, version, title, lang, genre, filename, encoding)
@@ -158,7 +169,6 @@ pub async fn insert_batch(pool: &PgPool, batch: &[(Book, [u8; 16])]) -> Result<(
     .bind(genres)
     .bind(filenames)
     .bind(encodings)
-
     .execute(pool)
     .await?;
 
