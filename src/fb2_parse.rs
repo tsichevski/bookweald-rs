@@ -35,6 +35,8 @@ pub fn parse_book_info(path: &Path, aliases: &Option<HashMap<String, Person>>) -
         ))?
         .to_string();
 
+    tracing::debug!("Parsing book info {}", path.display());
+
     // ── Create reader (handles ZIP) ──
     let mut reader: Reader<Box<dyn BufRead>> = if path.extension().and_then(|e| e.to_str())
         == Some("zip")
@@ -212,7 +214,7 @@ pub fn parse_book_info(path: &Path, aliases: &Option<HashMap<String, Person>>) -
     );
 
     let encoding = encoding.unwrap_or("UTF-8".to_string());
-    Ok(Book {
+    let book = Book {
         title,
         authors,
         ext_id,
@@ -221,5 +223,7 @@ pub fn parse_book_info(path: &Path, aliases: &Option<HashMap<String, Person>>) -
         genre,
         filename,
         encoding,
-    })
+    };
+    tracing::debug!("Parsed {:?}", &book);
+    Ok(book)
 }
